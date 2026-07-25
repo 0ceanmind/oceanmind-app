@@ -1,0 +1,24 @@
+{
+  "name": "oceanmind",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "OceanMind — depth-based interactive AI learning platform",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "postinstall": "npm --prefix client install",
+    "dev": "concurrently -k -n server,client \"node server/index.js\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build",
+    "start": "node server/index.js",
+    "test": "node --test server/test/scoring.test.js server/test/topicMatch.test.js server/test/mlp.test.js server/test/generate.test.js server/test/blocks.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

@@ -1,0 +1,32 @@
+Chatbots: Fundamentals and Design
+
+What a chatbot is
+A chatbot is software that converses with people in natural language, through text or voice. Chatbots range from simple rule-based systems that match keywords to prepared replies, up to assistants powered by large language models (LLMs) that generate responses. The purpose is always the same: let a human accomplish something through conversation - get an answer, complete a task, or be routed to the right place.
+
+Rule-based chatbots: intents, patterns, and responses
+Classic chatbots are built from intents. An intent is a category of things the user wants: "check opening hours", "ask for a refund", "book a table". Each intent has trigger patterns (keywords or example phrases) and one or more responses. When a message arrives, the bot scores it against every intent's patterns and picks the best match. If the top score is too low, the bot falls back.
+Strengths: predictable, cheap, fully controllable, easy to audit. Every reply was written by a human, so the bot can never invent facts.
+Weaknesses: brittle. Users phrase things in unlimited ways ("when do you close" vs "are you open late"), and pattern lists never cover them all. Overlapping intents confuse the matcher, and every new capability means manual authoring.
+
+Intent matching mechanics
+Simple matchers tokenize the message and count overlapping keywords, weighting multi-word phrase hits higher. More capable systems embed the message and the example phrases as vectors and compare similarity, which handles paraphrases far better. Either way the output is the same shape: a ranked list of (intent, confidence). Confidence thresholds decide between answering, asking a clarifying question, or falling back.
+
+LLM-based chatbots
+An LLM chatbot generates its reply instead of selecting it. The developer writes a system prompt - a hidden instruction that defines the bot's role, knowledge, tone, and limits ("You are the Reef Cafe assistant. Only answer from the knowledge below. If unsure, say so."). The model receives the system prompt plus the conversation history and produces a response.
+Strengths: handles paraphrase and follow-ups naturally, feels fluent, needs no pattern authoring.
+Weaknesses: can hallucinate (state false things confidently), costs per call, needs latency and safety management, and must be constrained by careful prompting or retrieval so it stays on-script.
+
+Conversation context and memory
+A conversation only makes sense with history. "And tomorrow?" is meaningless alone; after "What are your hours today?" it is obvious. Chatbots therefore carry recent turns in each request (the context window). Long conversations exceed the window, so production bots summarize older turns or store facts (name, order number) in structured memory. Rule-based bots handle context with slots: an intent like "book a table" collects required slot values (date, time, party size) across turns until complete.
+
+Fallbacks and graceful failure
+The most important design decision is what the bot does when it does not understand. Good fallbacks: admit uncertainty, offer what the bot can do, ask the user to rephrase, or hand off to a human. Bad fallbacks: guessing confidently, staying silent, or looping the same error. Trust is lost the first time a bot answers nonsense with confidence; it is preserved when the bot fails honestly.
+
+Personas and tone
+A chatbot's voice should be designed on purpose: name, personality, formality, emoji policy, sentence length. The persona lives in the system prompt (LLM bots) or in the authored responses (rule-based bots). Consistency matters more than cleverness - a bot that is playful in one reply and robotic in the next feels broken.
+
+Evaluating chatbot quality
+Measure, do not guess. Useful measures: containment rate (conversations resolved without a human), intent match accuracy on a labeled test set, fallback rate, user satisfaction ratings after the chat, and task completion rate. For LLM bots also track groundedness (did the reply stick to the provided knowledge?) and refusal correctness. A good evaluation set includes paraphrases, typos, out-of-scope questions, and multi-turn follow-ups.
+
+Hybrid designs
+Production systems often combine both worlds: rules for high-stakes flows that must be exact (payments, cancellations, legal wording) and an LLM for open questions, with a router deciding which path a message takes. Retrieval-augmented generation (RAG) grounds LLM replies in a document base: the bot retrieves relevant passages and the system prompt requires answers to come only from them, which sharply reduces hallucination.
