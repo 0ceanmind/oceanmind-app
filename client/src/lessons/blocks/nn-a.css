@@ -1,0 +1,103 @@
+/* =====================================================================
+   D1a neural-network blocks: nn-playground, neuron, activation,
+   forwardpass, gradient, logic-gate. Motion and feedback only; colours,
+   type and layout come from styles.css tokens and the shared motion.css.
+   ===================================================================== */
+
+/* ---------------------------------------------------------- shared bits */
+
+.om-nna-appear { animation: omNnaAppear 0.4s var(--ease) both; }
+@keyframes omNnaAppear { from { opacity: 0; } to { opacity: 1; } }
+.om-nna-fade { transition: opacity 0.3s var(--ease); }
+.om-nna-fade-out { animation: omNnaFadeOut 0.38s var(--ease) forwards; }
+@keyframes omNnaFadeOut { to { opacity: 0; } }
+
+/* A travelling signal dot (neuron, forward pass). */
+.om-nna-pulse { filter: drop-shadow(0 0 5px rgba(127, 216, 232, 0.9)); pointer-events: none; }
+
+/* A one-shot ring that bursts out of a node when a signal lands; key it to replay. */
+.om-nna-ring {
+  fill: none; stroke-width: 2; pointer-events: none;
+  transform-box: fill-box; transform-origin: center;
+  animation: omNnaRing 0.7s var(--ease) forwards;
+}
+@keyframes omNnaRing { from { opacity: 0.85; transform: scale(1); } to { opacity: 0; transform: scale(1.55); } }
+
+/* --------------------------------------------------------------- neuron */
+
+/* Negative (inhibitory) weights stream as sparser dots; same 12-unit period as .flow-anim. */
+.flow-anim.om-nna-inhib { stroke-dasharray: 2 10; }
+.om-nna-fill-ease { transition: fill 0.35s var(--ease); }
+
+/* ----------------------------------------------------------- activation */
+
+/* The x marker and value dots ride a CSS transform so slider steps glide. */
+.om-nna-slide { transition: transform 0.14s linear; }
+
+/* -------------------------------------------------------- nn-playground */
+
+/* Idle: the canvas frame breathes and a chip invites the first Train press. */
+.om-nna-idle {
+  position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 0.9rem;
+  opacity: 0; transition: opacity 0.5s var(--ease);
+}
+.om-nna-idle.on { opacity: 1; animation: omNnaBreathe 2.8s var(--ease) infinite; }
+@keyframes omNnaBreathe {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(127, 216, 232, 0.12), inset 0 0 24px rgba(22, 184, 216, 0.08); }
+  50% { box-shadow: inset 0 0 0 1px rgba(127, 216, 232, 0.36), inset 0 0 64px rgba(22, 184, 216, 0.22); }
+}
+.om-nna-idle-chip {
+  font-size: 0.8rem; color: var(--ink);
+  background: rgba(6, 20, 34, 0.78); border: 1px solid var(--hairline-strong); border-radius: 999px;
+  padding: 0.35rem 0.85rem; backdrop-filter: blur(8px);
+  animation: omNnaFloat 2.8s var(--ease) infinite;
+}
+@keyframes omNnaFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+
+/* A ripple where a clicked point lands. */
+.om-nna-ripple {
+  position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+  border: 2px solid var(--coral); pointer-events: none;
+  animation: omNnaRipple 0.7s var(--ease) forwards;
+}
+.om-nna-ripple.teal { border-color: #2ee6ff; }
+@keyframes omNnaRipple { from { opacity: 0.9; transform: scale(0.6); } to { opacity: 0; transform: scale(4); } }
+
+/* Converged: a badge on the canvas and one kelp glow round the frame. */
+.om-nna-converged {
+  position: absolute; top: 0.7rem; right: 0.7rem; pointer-events: none;
+  font-size: 0.8rem; font-weight: 600; color: var(--kelp);
+  background: rgba(6, 20, 34, 0.82); border: 1px solid rgba(53, 208, 165, 0.55); border-radius: 999px;
+  padding: 0.35rem 0.85rem; backdrop-filter: blur(8px);
+}
+.nn-canvas-frame.om-nna-frame-done { animation: omNnaDone 1.4s var(--ease) 1; }
+@keyframes omNnaDone {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(53, 208, 165, 0); }
+  35% { box-shadow: 0 0 0 5px rgba(53, 208, 165, 0.35), 0 0 30px rgba(53, 208, 165, 0.35); }
+}
+
+/* Loss sparkline inside .nn-stats. */
+.om-nna-spark-wrap { display: inline-flex; align-items: center; }
+.om-nna-spark { display: block; overflow: visible; }
+
+/* ----------------------------------------------------------- logic-gate */
+
+/* The dashed ring on the row being checked slowly turns while training. */
+.om-nna-probe { pointer-events: none; transform-box: fill-box; transform-origin: center; animation: omNnaTurn 2.4s linear infinite; }
+@keyframes omNnaTurn { to { transform: rotate(360deg); } }
+
+/* Truth table: the row being checked is tinted; a row whose prediction just flipped flashes gold. */
+.gate-truth td { transition: background 0.2s var(--ease); }
+.gate-truth tr.om-nna-checking td { background: rgba(22, 184, 216, 0.1); }
+.gate-truth tr.om-nna-flip td { animation: omNnaRowFlash 0.9s var(--ease); }
+@keyframes omNnaRowFlash { 0% { background: rgba(255, 206, 107, 0.22); } 100% { background: transparent; } }
+
+/* ------------------------------------------------------ reduced motion */
+
+/* Normal mode honours the OS setting; the pitch demo (html[data-demo="1"]) never strips motion. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-demo="1"]) .om-nna-idle.on,
+  html:not([data-demo="1"]) .om-nna-idle-chip,
+  html:not([data-demo="1"]) .om-nna-probe { animation: none; }
+}

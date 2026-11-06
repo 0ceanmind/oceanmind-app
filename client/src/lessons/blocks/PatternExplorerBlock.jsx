@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { DiagramBlock } from './DiagramBlocks.jsx';
+import { useEffect, useRef, useState } from 'react';
+import { DiagramBlock, layoutDiagram } from './DiagramBlocks.jsx';
 
 /**
  * The agent architecture patterns from the source whitepaper, as one
@@ -101,21 +101,49 @@ const PATTERNS = {
   },
 };
 
+// One shape for every pattern (the tallest one's), so switching never makes the block jump.
+const PATTERN_ASPECT = Math.max(...Object.values(PATTERNS).map((p) => {
+  const l = layoutDiagram(p.nodes, p.edges);
+  return l.H / l.W;
+}));
+const XFADE_MS = 420;
+
 export default function PatternExplorerBlock({ initial = 'chaining' }) {
   const [sel, setSel] = useState(PATTERNS[initial] ? initial : 'chaining');
+  const [prev, setPrev] = useState(null); // the pattern fading out underneath
+  const [revealed, setRevealed] = useState(false);
+  const fade = useRef(null);
+  useEffect(() => () => clearTimeout(fade.current), []);
+
+  const pick = (k) => {
+    if (k === sel) return;
+    clearTimeout(fade.current);
+    setPrev(sel);
+    setSel(k);
+    setRevealed(false);
+    fade.current = setTimeout(() => setPrev(null), XFADE_MS);
+  };
   const p = PATTERNS[sel];
   return (
-    <div className="block-frame">
+    <div className="block-frame" data-running={prev ? 'true' : 'false'} data-done={revealed ? 'true' : 'false'} data-phase={sel}>
       <div className="suggest-row" style={{ marginTop: 0, marginBottom: '0.6rem' }}>
         {Object.entries(PATTERNS).map(([k, v]) => (
-          <button key={k} className="suggest-pill" onClick={() => setSel(k)}
+          <button key={k} className="suggest-pill" onClick={() => pick(k)} aria-pressed={sel === k} data-demo={`pattern-${k}`}
             style={sel === k ? { borderColor: 'var(--accent)', color: 'var(--accent-soft)', background: 'rgba(22,184,216,0.1)' } : {}}>
             {v.label}
           </button>
         ))}
       </div>
-      <DiagramBlock key={sel} nodes={p.nodes} edges={p.edges} bare />
-      <div className="dg-detail">
+      {/* keyed stack: the old diagram keeps its state and fades out while the new one reveals */}
+      <div className="om-gen-xfade">
+        {[prev, sel].filter(Boolean).map((k) => (
+          <div key={k} className={k === sel ? 'om-gen-xfade-in' : 'om-gen-xfade-out'} aria-hidden={k !== sel}>
+            <DiagramBlock nodes={PATTERNS[k].nodes} edges={PATTERNS[k].edges} bare minAspect={PATTERN_ASPECT}
+              onRevealed={k === sel ? () => setRevealed(true) : undefined} />
+          </div>
+        ))}
+      </div>
+      <div key={sel} className="dg-detail" data-demo="pattern-detail">
         <b>When to use:</b> {p.use}<br />
         <b>Tradeoff:</b> {p.tradeoff}
       </div>

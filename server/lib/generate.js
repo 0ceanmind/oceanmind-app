@@ -196,7 +196,7 @@ export function sanitizeBlock(block, topicId) {
  * can't). Only returns an error when the result is genuinely unusable — a
  * mostly-good lesson never fails over one malformed chart.
  */
-function validateSteps(steps, topicId, { min = 4, max = 10, minInteractive = null } = {}) {
+export function validateSteps(steps, topicId, { min = 4, max = 10, minInteractive = null } = {}) {
   if (!Array.isArray(steps) || steps.length < min || steps.length > max) return `steps must have ${min}-${max} items`;
   let interactive = 0;
   for (const s of steps) {
@@ -347,7 +347,8 @@ Return JSON:
       if (typeof j?.intro !== 'string' || !j.intro) return 'lesson needs an intro';
       return validateSteps(j.steps, topic.id, { min: 4, max: 9 });
     },
-    { maxTokens: 8000 }
+    // meta is read only by the demo replay provider (a redesign looks like any goal-built lesson in the prompt)
+    { maxTokens: 8000, meta: { redesign: Boolean(profile.redesign) } }
   );
   lesson.steps = shuffleChecks(lesson.steps);
   return lesson;
@@ -401,7 +402,7 @@ Prefer expand/redesign whenever they'd serve the learner better than words. In "
  * Generate 2-3 NEW interactive steps clarifying `about`, to insert mid-lesson.
  * Knows the whole existing lesson so it never duplicates steps or blocks.
  */
-export async function generateExpansionSteps(topic, zone, about, lesson, stepIndex) {
+export async function generateExpansionSteps(topic, zone, about, lesson, stepIndex, { goal = null } = {}) {
   const sources = topChunks(topic.id, `${about} ${topic.title}`, 6000);
   const currentStep = lesson?.steps?.[stepIndex];
   const existing = (lesson?.steps ?? [])
@@ -431,7 +432,8 @@ Rules for these steps specifically:
 - Body max ~90 words: what to do in the block and what to notice.
 ${LESSON_RULES(topic, zone)}`,
     (j) => validateSteps(j?.steps, topic.id, { min: 1, max: 3, minInteractive: 1 }),
-    { maxTokens: 6000 }
+    // meta is read only by the demo replay provider
+    { maxTokens: 6000, meta: { goal } }
   );
   return shuffleChecks(result.steps);
 }
@@ -439,7 +441,7 @@ ${LESSON_RULES(topic, zone)}`,
 /* ------------------------------------------------ dive-log summary */
 
 /** Personal post-lesson summary: what THIS learner learned, did, and should do next. */
-export async function generateSummary(topic, { zone, scorePct, answered, lesson }) {
+export async function generateSummary(topic, { zone, scorePct, answered, lesson, goal }) {
   const stepList = (lesson?.steps ?? [])
     .map((s) => `- ${s.title}${s.block ? ` [interactive: ${s.block.type}]` : ''}`)
     .join('\n');
@@ -461,7 +463,7 @@ LESSON STEPS THEY COMPLETED:
 ${stepList}
 
 CONCEPTS THEY ORIGINALLY MISSED IN THE PLACEMENT QUIZ: ${gaps.length ? gaps.join(' · ') : 'none'}
-
+${goal ? `THEIR GOAL (in their own words — connect the log to it where it fits): "${goal}"\n` : ''}
 Write their dive log. Return JSON:
 {"headline":"one warm sentence about what they achieved","learned":["…"],"built":["…"],"nextSteps":["…"]}
 - learned: 3-5 concrete concepts they now understand (address their original gaps explicitly where covered).

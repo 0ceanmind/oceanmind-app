@@ -1,16 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
-import { Card, Reveal, Spinner, EmptyState, DepthGauge, FaceRating, Md, Accordion, useToast } from '../components/ui.jsx';
+import {
+  Card, Reveal, Spinner, EmptyState, DepthGauge, FaceRating, Md, useToast,
+  useDive, useStages, usePacedStages, demoReplyMs, demoReplyMaxMs, Stages, BubbleBurst,
+} from '../components/ui.jsx';
+import { isDemo, sleep, useTypewriter } from '../lib/motion.js';
 import BlockRenderer from '../lessons/BlockRenderer.jsx';
 import DiveJourney from '../components/DiveJourney.jsx';
 
 const REASONS = ['Too easy', 'Too hard', 'Repetitive', 'Wrong topic', 'Wasn’t helpful'];
+// How long a finished agent checklist stays on screen (every stage ticked) before the hand-off.
+const HANDOFF_MS = 450;
+const handoffMs = () => (isDemo() ? 320 : HANDOFF_MS);
+// Clearance for the fixed nav when scrolling a lesson step to the top.
+const NAV_CLEARANCE = 100;
 
 export default function SessionView({ sessionId, navigate }) {
   const toast = useToast();
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
-  // stage: map → quiz → reveal → lesson → feedback → happy | sad-sent
+  // stage: map → quiz → reveal → lesson → summary → feedback → happy | sad-sent
   const [stage, setStage] = useState(null);
 
   useEffect(() => {
@@ -36,45 +45,67 @@ export default function SessionView({ sessionId, navigate }) {
     return () => { delete document.body.dataset.zone; };
   }, [session?.zone, stage]);
 
+  // Every stage opens at the top: the CTA that got us here often sits far down
+  // a long page, and the next stage's header would otherwise start off-screen.
+  useEffect(() => {
+    if (stage) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [stage]);
+
+  let body = null;
   if (error) {
-    return (
+    body = (
       <div className="page page--narrow">
         <EmptyState emoji="🫧">{error}<br />
           <button className="btn btn--ghost mt-2" onClick={() => navigate('/')}>← Back</button>
         </EmptyState>
       </div>
     );
+  } else if (!session || !stage) {
+    body = (
+      <div className="page center om-v-loading">
+        <Spinner />
+        <p className="muted mt-1">Opening your dive…</p>
+      </div>
+    );
+  } else {
+    const props = { session, setSession, setStage, navigate, toast };
+    if (stage === 'map') body = <KnowledgeMapStage {...props} />;
+    else if (stage === 'quiz') body = <QuizStage {...props} />;
+    else if (stage === 'reveal') body = <RevealStage {...props} />;
+    else if (stage === 'lesson') body = <LessonStage {...props} />;
+    else if (stage === 'summary') body = <SummaryStage {...props} />;
+    else if (stage === 'feedback') body = <FeedbackStage {...props} />;
+    else if (stage === 'happy') body = <HappyStage {...props} />;
+    else if (stage === 'sad-sent' || stage === 'awaiting_rebuild') body = <AwaitingStage {...props} />;
+    else if (stage === 'closed') body = <ClosedStage {...props} />;
   }
-  if (!session || !stage) return <div className="page center"><Spinner /></div>;
 
-  const props = { session, setSession, setStage, navigate, toast };
-  if (stage === 'map') return <KnowledgeMapStage {...props} />;
-  if (stage === 'quiz') return <QuizStage {...props} />;
-  if (stage === 'reveal') return <RevealStage {...props} />;
-  if (stage === 'lesson') return <LessonStage {...props} />;
-  if (stage === 'summary') return <SummaryStage {...props} />;
-  if (stage === 'feedback') return <FeedbackStage {...props} />;
-  if (stage === 'happy') return <HappyStage {...props} />;
-  if (stage === 'sad-sent' || stage === 'awaiting_rebuild') return <AwaitingStage {...props} />;
-  if (stage === 'closed') return <ClosedStage {...props} />;
-  return null;
+  // data-stage lets the demo director always know where the learner is.
+  const stageName = error ? 'error' : stage ?? 'loading';
+  return (
+    <div data-demo="session" data-stage={stageName} data-session-id={session?.id ?? sessionId}>
+      <div key={stageName} className="om-v-stage">{body}</div>
+    </div>
+  );
 }
 
 /* ------------------------------------------------ knowledge map (generated) */
 
-/** Concept title box — click to reveal the details. */
-function ConceptBox({ concept }) {
+/** Concept title box — click to reveal the details. Enters as if just compiled. */
+function ConceptBox({ concept, col, order }) {
   const [open, setOpen] = useState(false);
   return (
-    <button className={`concept concept--toggle ${open ? 'open' : ''}`} onClick={() => setOpen(!open)} aria-expanded={open}>
+    <button className={`concept concept--toggle om-v-compile ${open ? 'open' : ''}`} style={{ '--i': order }}
+      onClick={() => setOpen(!open)} aria-expanded={open} data-demo="concept-toggle" data-col={col}>
       <b>{concept.name} <span className="chev">▶</span></b>
-      {open && <span>{concept.desc}</span>}
+      <span className="om-v-desc" aria-hidden={!open}><span>{concept.desc}</span></span>
     </button>
   );
 }
 
 function KnowledgeMapStage({ session, setStage }) {
   const km = session.knowledgeMap;
+  const mustCount = km.mustKnow.length;
   return (
     <div className="page">
       <Reveal>
@@ -90,17 +121,17 @@ function KnowledgeMapStage({ session, setStage }) {
         <div className="map-grid">
           <Card className="map-col">
             <h3><span className="chip chip--must">Must know</span></h3>
-            {km.mustKnow.map((c) => <ConceptBox key={c.name} concept={c} />)}
+            {km.mustKnow.map((c, ci) => <ConceptBox key={c.name} concept={c} col="must" order={ci} />)}
           </Card>
           <Card className="map-col">
             <h3><span className="chip chip--need">Need to know</span></h3>
-            {km.needToKnow.map((c) => <ConceptBox key={c.name} concept={c} />)}
+            {km.needToKnow.map((c, ci) => <ConceptBox key={c.name} concept={c} col="need" order={mustCount + ci} />)}
           </Card>
         </div>
       </Reveal>
       <Reveal delay={260}>
         <div className="center mt-3">
-          <button className="btn btn--primary" onClick={() => setStage('quiz')}>
+          <button className="btn btn--primary" onClick={() => setStage('quiz')} data-demo="map-cta">
             Measure my depth — {session.questions.length} questions
             <span className="btn-orb">→</span>
           </button>
@@ -122,11 +153,18 @@ function QuizStage({ session, setSession, setStage, toast }) {
 
   const firstUnanswered = questions.findIndex((q) => !answeredMap.has(q.id));
   const [i, setI] = useState(firstUnanswered === -1 ? questions.length - 1 : firstUnanswered);
+  const [dir, setDir] = useState(1); // slide direction of the question swap
+  const [fresh, setFresh] = useState(null); // question answered on screen just now → pop / shake once
   const [busyChoice, setBusyChoice] = useState(null);
   const [summary, setSummary] = useState(null);
 
   const q = questions[i];
   const result = answeredMap.get(q.id) ?? null; // {choice, correct, correctIndex, explanation}
+  const go = (to) => {
+    setDir(to >= i ? 1 : -1);
+    setFresh(null);
+    setI(to);
+  };
 
   const answer = async (choice) => {
     if (result || busyChoice !== null) return;
@@ -136,6 +174,7 @@ function QuizStage({ session, setSession, setStage, toast }) {
         method: 'POST',
         body: { questionId: q.id, choice },
       });
+      setFresh(q.id);
       setSession((s) => ({
         ...s,
         answered: [...(s.answered ?? []), { questionId: q.id, choice, correct: r.correct, correctIndex: r.correctIndex, explanation: r.explanation }],
@@ -148,42 +187,58 @@ function QuizStage({ session, setSession, setStage, toast }) {
     }
   };
 
-  const allAnswered = (session.answered?.length ?? 0) === questions.length;
+  const answeredCount = session.answered?.length ?? 0;
+  const allAnswered = answeredCount === questions.length;
 
   const finish = () => {
     setSession((s) => ({ ...s, ...(summary ?? {}), score: summary?.scorePct ?? s.score, zone: summary?.zone ?? s.zone, depth: summary?.depth ?? s.depth }));
     setStage('reveal');
   };
 
+  const animate = fresh === q.id;
   const optClass = (idx) => {
     if (!result) return busyChoice === idx ? 'option selected' : 'option';
     let cls = 'option locked';
-    if (idx === result.correctIndex) cls += ' reveal-correct';
-    else if (idx === result.choice) cls += ' reveal-wrong';
+    if (idx === result.correctIndex) cls += ` reveal-correct${animate ? ` om-correct${result.correct ? '' : ' om-v-late'}` : ''}`;
+    else if (idx === result.choice) cls += ` reveal-wrong${animate ? ' om-wrong' : ''}`;
     return cls;
+  };
+
+  // one pip per question: correct / wrong / no idea / current / to come
+  const pip = (qq, qi) => {
+    const a = answeredMap.get(qq.id);
+    if (a) return a.correct ? 'right' : a.choice === -1 ? 'skip' : 'wrong';
+    return qi === i ? 'now' : '';
   };
 
   return (
     <div className="page page--narrow">
       <span className="eyebrow">Step 2 · Depth check · {session.topicTitle}</span>
       <div className="progress-track" aria-label={`Question ${i + 1} of ${questions.length}`}>
-        <div className="progress-fill" style={{ transform: `scaleX(${(session.answered?.length ?? 0) / questions.length})` }} />
+        <div className="progress-fill" style={{ transform: `scaleX(${answeredCount / questions.length})` }} />
       </div>
-      <Reveal key={q.id}>
+      <div className="om-v-tally" aria-hidden="true" data-demo="quiz-tally" data-answered={answeredCount}>
+        {questions.map((qq, qi) => <i key={qq.id} className={pip(qq, qi)} />)}
+      </div>
+      <div key={q.id} className={`om-v-swap${dir < 0 ? ' om-v-back' : ''}`} data-demo="quiz" data-qid={q.id} data-index={i}
+        data-answered={Boolean(result)} data-correct={result ? String(result.correct) : undefined} data-busy={busyChoice !== null}>
         <Card>
           <p className="q-concept">Concept: {q.concept} · {i + 1} / {questions.length}</p>
           <h2 className="q-text">{q.text}</h2>
           {q.options.map((opt, idx) => (
-            <button key={idx} className={optClass(idx)} onClick={() => answer(idx)} disabled={busyChoice !== null && !result}>
+            <button key={idx} className={optClass(idx)} onClick={() => answer(idx)} disabled={busyChoice !== null && !result}
+              data-demo="quiz-option" data-idx={idx}>
               <span className="key">
-                {result && idx === result.correctIndex ? '✓' : result && idx === result.choice && !result.correct ? '✗' : 'ABCD'[idx]}
+                {busyChoice === idx && !result ? <Spinner />
+                  : result && idx === result.correctIndex ? '✓' : result && idx === result.choice && !result.correct ? '✗' : 'ABCD'[idx]}
               </span>
-              {busyChoice === idx && !result ? <Spinner /> : opt}
+              {opt}
             </button>
           ))}
           {!result && (
-            <button className={`option option--noidea ${busyChoice === -1 ? 'selected' : ''}`} onClick={() => answer(-1)} disabled={busyChoice !== null}>
-              <span className="key">?</span> I don’t have any idea — and that’s completely fine
+            <button className={`option option--noidea ${busyChoice === -1 ? 'selected' : ''}`} onClick={() => answer(-1)} disabled={busyChoice !== null}
+              data-demo="quiz-noidea">
+              <span className="key">{busyChoice === -1 ? <Spinner /> : '?'}</span> I don’t have any idea — and that’s completely fine
             </button>
           )}
 
@@ -196,29 +251,53 @@ function QuizStage({ session, setSession, setStage, toast }) {
           )}
 
           <div className="row-between mt-2">
-            <button className="btn btn--ghost" onClick={() => setI(Math.max(0, i - 1))} disabled={i === 0}>← Back</button>
+            <button className="btn btn--ghost" onClick={() => go(Math.max(0, i - 1))} disabled={i === 0} data-demo="quiz-back">← Back</button>
             {allAnswered && i === questions.length - 1 ? (
-              <button className="btn btn--primary" onClick={finish}>
+              <button className="btn btn--primary" onClick={finish} data-demo="quiz-reveal">
                 Reveal my depth <span className="btn-orb">→</span>
               </button>
             ) : (
-              <button className="btn btn--primary" onClick={() => setI(Math.min(questions.length - 1, i + 1))} disabled={!result}>
+              <button className="btn btn--primary" onClick={() => go(Math.min(questions.length - 1, i + 1))} disabled={!result} data-demo="quiz-next">
                 Next <span className="btn-orb">→</span>
               </button>
             )}
           </div>
         </Card>
-      </Reveal>
+      </div>
     </div>
   );
 }
 
 /* ------------------------------------------------ depth reveal → build lesson */
 
+const ZONE_ORDER = ['sunlight', 'twilight', 'midnight'];
+
 function RevealStage({ session, setSession, setStage, toast }) {
   const zone = session.zones[session.zone];
   const rebuilt = Boolean(session.rebuiltFrom);
   const [building, setBuilding] = useState(false);
+  const [built, setBuilt] = useState(false);
+  const dive = useDive(session.depth);
+  const buildSteps = [
+    `Placing you at ${session.depth.toLocaleString()} m`,
+    'Choosing interactive blocks for your gaps',
+    'Writing each step',
+    'Checking it against the sources',
+  ];
+  // paced to the build request (see usePacedStages); real models: 1.4 s / 2.6 s / 9 s
+  const build = usePacedStages(buildSteps.length, { stepMs: [1400, 2600, 9000] });
+  const buildAt = build.at;
+
+  // which zone the diver is passing through right now (for the callouts)
+  const passing = dive.done ? session.zone : dive.pct >= 0.65 ? 'midnight' : dive.pct >= 0.3 ? 'twilight' : 'sunlight';
+  const zoneName = (id) => session.zones[id]?.label ?? id;
+  const callout = dive.done
+    ? `✓ Settled in the ${zone.label}`
+    : passing === 'sunlight'
+      ? `↓ Descending through the ${zoneName('sunlight')}`
+      : passing === 'twilight'
+        ? `↓ Passing 200 m — entering the ${zoneName('twilight')}`
+        : `↓ Passing 1,000 m — entering the ${zoneName('midnight')}`;
 
   const enterLesson = async () => {
     if (session.lesson) {
@@ -226,12 +305,17 @@ function RevealStage({ session, setSession, setStage, toast }) {
       return;
     }
     setBuilding(true);
+    build.start({ expectMs: demoReplyMs('lesson') });
     try {
       const { session: s } = await api(`/api/sessions/${session.id}/build-lesson`, { method: 'POST' });
+      await build.finish(); // every stage has had its moment, then all tick ✓
+      setBuilt(true);
+      await sleep(handoffMs());
       setSession(s);
       setStage('lesson');
     } catch (e) {
       toast(e.message, 'error');
+      build.reset();
       setBuilding(false);
     }
   };
@@ -251,21 +335,28 @@ function RevealStage({ session, setSession, setStage, toast }) {
       <Reveal delay={120}>
         <Card>
           <div className="gauge-wrap">
-            <DepthGauge depth={session.depth} zoneLabel={zone.label} />
-            <div className="depth-readout" style={{ alignSelf: 'center' }}>
-              <div className="depth-num">{session.depth.toLocaleString()} <small>meters</small></div>
-              <div className="zone-pill">🤿 {zone.label} · {zone.range} · {zone.levelLabel}</div>
-              <p className="lede mt-2" style={{ fontSize: '0.98rem' }}>
+            <DepthGauge depth={session.depth} zoneLabel={zone.label} dive={dive} />
+            <div className="depth-readout" style={{ alignSelf: 'center' }} data-demo="depth-readout"
+              data-done={dive.done} data-depth={session.depth} data-zone={session.zone}
+              data-passing={passing} data-zone-index={ZONE_ORDER.indexOf(passing)}>
+              <div key={dive.done ? 'done' : passing} className="om-v-callout om-swap">{callout}</div>
+              <div className="depth-num">{Math.round(dive.meters).toLocaleString()} <small>meters</small></div>
+              <div className={`zone-pill om-v-settle${dive.done ? ' in' : ''}`}>🤿 {zone.label} · {zone.range} · {zone.levelLabel}</div>
+              <p className={`lede mt-2 om-v-settle${dive.done ? ' in' : ''}`} style={{ fontSize: '0.98rem' }}>
                 {session.zone === 'sunlight' && 'Plenty of light up here — the agent will build your lesson from first principles, repairing exactly what the quiz surfaced.'}
                 {session.zone === 'twilight' && 'You know the surface — the agent will build your lesson around the mechanics, focused on what you missed.'}
                 {session.zone === 'midnight' && 'Deep water. The agent will skip the basics and build your lesson around the hard parts.'}
               </p>
-              <button className="btn btn--primary mt-3" onClick={enterLesson} disabled={building}>
+              <button className="btn btn--primary mt-3" onClick={enterLesson} disabled={building} data-demo="build-lesson"
+                data-state={building ? (built ? 'built' : 'building') : session.lesson ? 'ready' : 'idle'}>
                 {building ? <Spinner /> : session.lesson ? 'Enter the lesson' : 'Build my lesson'}
                 {!building && <span className="btn-orb">→</span>}
               </button>
               {building && (
-                <p className="muted mt-1">The agent is writing your personalized walkthrough from the source material — usually 10–30 seconds.</p>
+                <div className="om-v-build" role="status" data-demo="build-stages">
+                  <p className="muted">The agent is writing your personalized walkthrough from the source material.</p>
+                  <Stages items={buildSteps} current={buildAt} />
+                </div>
               )}
             </div>
           </div>
@@ -282,44 +373,90 @@ function LessonStage({ session, setSession, setStage, toast }) {
   const lesson = session.lesson;
   const steps = Array.isArray(lesson?.steps) && lesson.steps.length ? lesson.steps : [{ title: 'Loading…', body: '' }];
   const [rawI, setI] = useState(0);
+  const [dir, setDir] = useState(1); // slide direction of the step swap
   const [checkPicks, setCheckPicks] = useState({}); // step key → chosen idx
+  const [freshPick, setFreshPick] = useState(null); // check picked on screen just now → pop / shake once
+  const [inserted, setInserted] = useState(null); // { from, count } steps Lulu just added → flash them
+  const progressRef = useRef(null);
   // clamp the index into range — the lesson can shrink when Lulu reshapes it,
   // and reading steps[out-of-range] would crash / freeze the page.
   const i = Math.max(0, Math.min(rawI, steps.length - 1));
   const step = steps[i];
   const atEnd = i === steps.length - 1;
   const checkKey = `${i}:${step.title}`;
-  const goTo = (idx) => setI(Math.max(0, Math.min(idx, steps.length - 1)));
+  const goTo = (idx) => {
+    const to = Math.max(0, Math.min(idx, steps.length - 1));
+    setDir(to >= i ? 1 : -1);
+    setFreshPick(null);
+    setI(to);
+  };
 
   const pick = (idx) => {
     if (checkPicks[checkKey] !== undefined) return;
+    setFreshPick(checkKey);
     setCheckPicks((m) => ({ ...m, [checkKey]: idx }));
   };
   const isCheck = step.block?.type === 'check';
   const checkQ = isCheck ? step.block.question : null;
   const picked = checkPicks[checkKey];
   const checkAnswered = !isCheck || picked !== undefined;
+  const stepKind = isCheck ? 'check' : step.block ? 'interact' : 'learn';
+  const isNew = (si) => Boolean(inserted) && si >= inserted.from && si < inserted.from + inserted.count;
+
+  // Each new step starts at the top of its card (just under the nav); step 0
+  // and a redesigned lesson start at the very top of the page.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    const bar = progressRef.current;
+    const top = i === 0 || !bar ? 0 : bar.getBoundingClientRect().top + window.scrollY - NAV_CLEARANCE;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }, [i, lesson?.title]);
+
+  // the insertion flash (.om-flash runs 2 × 1.4s) clears itself
+  useEffect(() => {
+    if (!inserted) return undefined;
+    const t = setTimeout(() => setInserted(null), 3000);
+    return () => clearTimeout(t);
+  }, [inserted]);
 
   // The guide (tutor agent) can mutate the lesson live.
   const onLessonUpdated = (newSession, updated, addedCount) => {
     if (updated === 'redesigned') {
+      setDir(1);
       setI(0);
       setCheckPicks({});
+      setFreshPick(null);
       setSession(newSession);
       toast('🌊 Lulu rebuilt your experience around your goal — starting the new dive.', 'success');
     } else if (updated === 'expanded') {
       setCheckPicks({});
+      setFreshPick(null);
       setSession(newSession);
       // jump to the first newly-inserted step (right after the current one)
+      setDir(1);
       setI(i + 1);
+      setInserted({ from: i + 1, count: Math.max(1, addedCount), at: Date.now() });
       toast(`🤿 Lulu added ${addedCount} new step${addedCount > 1 ? 's' : ''} — here they are.`, 'success');
     } else {
       setSession(newSession);
     }
   };
 
+  const checkClass = (idx) => {
+    if (picked === undefined) return 'option';
+    const animate = freshPick === checkKey;
+    let cls = 'option locked';
+    if (idx === checkQ.correctIndex) cls += ` reveal-correct${animate ? ` om-correct${picked === checkQ.correctIndex ? '' : ' om-v-late'}` : ''}`;
+    else if (idx === picked) cls += ` reveal-wrong${animate ? ' om-wrong' : ''}`;
+    return cls;
+  };
+
   return (
-    <div className="page">
+    <div className="page om-v-lesson">
       <Reveal>
         <div className="lesson-head">
           <div>
@@ -327,46 +464,40 @@ function LessonStage({ session, setSession, setStage, toast }) {
             <h1 className="hero-title" style={{ fontSize: 'clamp(1.8rem,4vw,2.5rem)' }}>{lesson.title}</h1>
             <p className="lede">{lesson.intro}</p>
           </div>
-          <span className="badge badge--live" title="This lesson was generated for you by the connected model">✦ Built for you</span>
+          <span className="badge badge--live om-v-shimmer" title="This lesson was generated for you by the connected model">✦ Built for you</span>
         </div>
       </Reveal>
 
-      <DiveJourney steps={steps} current={i} onJump={goTo} />
+      <DiveJourney steps={steps} current={i} onJump={goTo} fresh={inserted} />
 
-      <div className="walk-progress" aria-label={`Step ${i + 1} of ${steps.length}`}>
+      <div className="walk-progress" ref={progressRef} aria-label={`Step ${i + 1} of ${steps.length}`}>
         {steps.map((_, si) => (
-          <span key={si} className={si < i ? 'done' : si === i ? 'now' : ''} />
+          <span key={si} className={`${si < i ? 'done' : si === i ? 'now' : ''}${isNew(si) ? ' om-v-new' : ''}`} />
         ))}
       </div>
 
-      <Reveal key={`${i}-${steps.length}-${step.title}`}>
-        <Card>
+      <div key={`${i}-${steps.length}-${step.title}`} className={`om-v-swap${dir < 0 ? ' om-v-back' : ''}`}
+        data-demo="lesson-step" data-step-index={i} data-step-count={steps.length} data-step-kind={stepKind}
+        data-block-type={step.block?.type ?? 'none'} data-check-answered={isCheck ? String(picked !== undefined) : undefined}>
+        <Card className={isNew(i) ? 'om-flash' : ''}>
           <div className="step-kind">
             {isCheck ? `Step ${i + 1} · Check yourself` : step.block ? `Step ${i + 1} · Interact` : `Step ${i + 1} · Learn`}
           </div>
           <h2 className="walk-title">{step.title}</h2>
-          <Md text={step.body} />
+          <Md text={step.body} stagger />
 
           {isCheck ? (
             <div className="mt-2">
               <h3 style={{ fontSize: '1.02rem', marginBottom: '0.8rem', color: '#fff' }}>{checkQ.text}</h3>
-              {checkQ.options.map((opt, idx) => {
-                let cls = 'option';
-                if (picked !== undefined) {
-                  cls += ' locked';
-                  if (idx === checkQ.correctIndex) cls += ' reveal-correct';
-                  else if (idx === picked) cls += ' reveal-wrong';
-                }
-                return (
-                  <button key={idx} className={cls} onClick={() => pick(idx)}>
-                    <span className="key">
-                      {picked !== undefined && idx === checkQ.correctIndex ? '✓'
-                        : picked !== undefined && idx === picked ? '✗' : 'ABCD'[idx]}
-                    </span>
-                    {opt}
-                  </button>
-                );
-              })}
+              {checkQ.options.map((opt, idx) => (
+                <button key={idx} className={checkClass(idx)} onClick={() => pick(idx)} data-demo="check-option" data-idx={idx}>
+                  <span className="key">
+                    {picked !== undefined && idx === checkQ.correctIndex ? '✓'
+                      : picked !== undefined && idx === picked ? '✗' : 'ABCD'[idx]}
+                  </span>
+                  {opt}
+                </button>
+              ))}
               {picked !== undefined && (
                 <div className={`answer-explain ${picked === checkQ.correctIndex ? 'good' : 'bad'}`}>
                   <b>{picked === checkQ.correctIndex ? '✓ Exactly.' : '✗ Not quite.'}</b> {checkQ.explanation}
@@ -378,20 +509,20 @@ function LessonStage({ session, setSession, setStage, toast }) {
           )}
 
           <div className="row-between mt-3">
-            <button className="btn btn--ghost" onClick={() => goTo(i - 1)} disabled={i === 0}>← Previous step</button>
+            <button className="btn btn--ghost" onClick={() => goTo(i - 1)} disabled={i === 0} data-demo="step-prev">← Previous step</button>
             {atEnd ? (
-              <button className="btn btn--primary" onClick={() => setStage('summary')}>
+              <button className="btn btn--primary" onClick={() => setStage('summary')} data-demo="step-next" data-last="true">
                 Surface — open your dive log <span className="btn-orb">🧭</span>
               </button>
             ) : (
               <button className="btn btn--primary" onClick={() => goTo(i + 1)} disabled={!checkAnswered}
-                title={checkAnswered ? '' : 'Answer the check question first'}>
+                title={checkAnswered ? '' : 'Answer the check question first'} data-demo="step-next" data-last="false">
                 Next step <span className="btn-orb">→</span>
               </button>
             )}
           </div>
         </Card>
-      </Reveal>
+      </div>
 
       <Tutor sessionId={session.id} stepIndex={i} onLessonUpdated={onLessonUpdated} />
     </div>
@@ -400,12 +531,49 @@ function LessonStage({ session, setSession, setStage, toast }) {
 
 /* ------------------------------------------------ dive log (summary) */
 
+// One request per session even when React StrictMode runs the effect twice.
+const summaryRequests = new Map();
+function requestSummary(sessionId) {
+  if (!summaryRequests.has(sessionId)) {
+    const p = api(`/api/sessions/${sessionId}/summary`, { method: 'POST' });
+    summaryRequests.set(sessionId, p);
+    p.catch(() => {}).finally(() => summaryRequests.delete(sessionId));
+  }
+  return summaryRequests.get(sessionId);
+}
+
+const LOG_STAGES = ['Reading back your dive', 'Collecting what you learned', 'Logging what you built', 'Charting where to dive next'];
+
+/** The three log columns; items surface one by one like treasure. */
+function LogCols({ summary }) {
+  const cols = [
+    { cls: 'learned', title: '🌊 What you learned', items: summary.learned },
+    { cls: 'built', title: '🔧 What you built', items: summary.built },
+    { cls: 'next', title: '🧭 Where to dive next', items: summary.nextSteps },
+  ];
+  let n = 0;
+  return (
+    <div className="log-cols om-v-log">
+      {cols.map((c, ci) => (
+        <div key={c.cls} className={`log-col ${c.cls}`} style={{ '--c': ci }}>
+          <h4>{c.title}</h4>
+          <ul>{(c.items ?? []).map((x, xi) => <li key={xi} style={{ '--i': n++ }}>{x}</li>)}</ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SummaryStage({ session, setSession, setStage, toast }) {
   const [summary, setSummary] = useState(session.summary ?? null);
+  const [showLog, setShowLog] = useState(Boolean(session.summary));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const zone = session.zones[session.zone];
+  // paced to the summary request (see usePacedStages); real models: 1.2 s / 2.2 s / 6 s
+  const writing = usePacedStages(LOG_STAGES.length, { stepMs: [1200, 2200, 6000] });
+  const writingAt = writing.at;
 
   const logMarkdown = () => {
     if (!summary) return '';
@@ -430,6 +598,7 @@ function SummaryStage({ session, setSession, setStage, toast }) {
   };
 
   const saveLog = async () => {
+    if (saved) return; // one project per log — repeat clicks used to create duplicates
     setSaving(true);
     try {
       await api('/api/projects', {
@@ -448,11 +617,16 @@ function SummaryStage({ session, setSession, setStage, toast }) {
   useEffect(() => {
     if (summary) return;
     let cancelled = false;
-    api(`/api/sessions/${session.id}/summary`, { method: 'POST' })
-      .then((r) => {
+    writing.start({ expectMs: demoReplyMs('summary') });
+    requestSummary(session.id)
+      .then(async (r) => {
+        if (cancelled) return;
+        setSession((s) => ({ ...s, summary: r.summary }));
+        await writing.finish(); // every stage has had its moment, then all tick ✓
         if (cancelled) return;
         setSummary(r.summary);
-        setSession((s) => ({ ...s, summary: r.summary }));
+        await sleep(handoffMs());
+        if (!cancelled) setShowLog(true);
       })
       .catch((e) => !cancelled && setError(e.message));
     return () => { cancelled = true; };
@@ -461,26 +635,29 @@ function SummaryStage({ session, setSession, setStage, toast }) {
 
   if (error) {
     return (
-      <div className="page page--narrow">
+      <div className="page page--narrow" data-demo="summary" data-ready="false">
         <EmptyState emoji="🫧">{error}
           <br />
-          <button className="btn btn--primary mt-2" onClick={() => { setError(''); setSummary(null); setStage('lesson'); }}>← Back to the lesson</button>
-          <button className="btn btn--ghost mt-2" onClick={() => setStage('feedback')} style={{ marginLeft: '0.6rem' }}>Skip to feedback →</button>
+          <button className="btn btn--primary mt-2" onClick={() => { setError(''); setSummary(null); setStage('lesson'); }} data-demo="summary-back">← Back to the lesson</button>
+          <button className="btn btn--ghost mt-2" onClick={() => setStage('feedback')} style={{ marginLeft: '0.6rem' }} data-demo="summary-rate">Skip to feedback →</button>
         </EmptyState>
       </div>
     );
   }
-  if (!summary) {
+  if (!showLog) {
     return (
-      <div className="page page--narrow center" style={{ paddingTop: '20vh' }}>
-        <Spinner />
+      <div className="page page--narrow center om-v-writing" data-demo="summary" data-ready="false">
+        <span className="eyebrow">🪙 Surfacing</span>
         <p className="lede mt-2" style={{ margin: '1rem auto 0' }}>Writing your dive log — what you learned, what you built…</p>
+        <div className="om-v-writing-list" role="status">
+          <Stages items={LOG_STAGES} current={writingAt} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="page">
+    <div className="page" data-demo="summary" data-ready="true">
       <Reveal>
         <div className="center">
           <span className="eyebrow">🪙 Treasure found · your dive log</span>
@@ -491,29 +668,16 @@ function SummaryStage({ session, setSession, setStage, toast }) {
         </div>
       </Reveal>
       <Reveal delay={140}>
-        <div className="log-cols">
-          <div className="log-col learned">
-            <h4>🌊 What you learned</h4>
-            <ul>{summary.learned.map((x, i) => <li key={i}>{x}</li>)}</ul>
-          </div>
-          <div className="log-col built">
-            <h4>🔧 What you built</h4>
-            <ul>{summary.built.map((x, i) => <li key={i}>{x}</li>)}</ul>
-          </div>
-          <div className="log-col next">
-            <h4>🧭 Where to dive next</h4>
-            <ul>{summary.nextSteps.map((x, i) => <li key={i}>{x}</li>)}</ul>
-          </div>
-        </div>
+        <LogCols summary={summary} />
       </Reveal>
       <Reveal delay={240}>
         <div className="center mt-3">
-          <button className="btn btn--ghost" onClick={() => setStage('lesson')}>← Back to the lesson</button>
-          <button className="btn" onClick={downloadLog} style={{ marginLeft: '0.7rem' }}>⬇ Download dive log</button>
-          <button className="btn" onClick={saveLog} disabled={saving} style={{ marginLeft: '0.7rem' }}>
-            {saving ? <Spinner /> : saved ? '✓ Saved' : '🗂️ Save to Projects'}
+          <button className="btn btn--ghost" onClick={() => setStage('lesson')} data-demo="summary-back">← Back to the lesson</button>
+          <button className="btn" onClick={downloadLog} style={{ marginLeft: '0.7rem' }} data-demo="summary-download">⬇ Download dive log</button>
+          <button className="btn" onClick={saveLog} disabled={saving || saved} style={{ marginLeft: '0.7rem' }} data-demo="summary-save" data-saved={saved}>
+            {saving ? <Spinner /> : saved ? <span className="om-pop">✓ Saved</span> : '🗂️ Save to Projects'}
           </button>
-          <button className="btn btn--primary" onClick={() => setStage('feedback')} style={{ marginLeft: '0.7rem' }}>
+          <button className="btn btn--primary" onClick={() => setStage('feedback')} style={{ marginLeft: '0.7rem' }} data-demo="summary-rate">
             Rate the dive <span className="btn-orb">→</span>
           </button>
         </div>
@@ -524,16 +688,66 @@ function SummaryStage({ session, setSession, setStage, toast }) {
 
 /* ------------------------------------------------ tutor chat */
 
+const PANEL_EXIT_MS = 260; // matches .tutor-panel.om-v-leaving
+// What Lulu is doing while a reply is in flight. The 3rd stage appears only when
+// the reply outlasts a plain answer (demo), i.e. she is writing new steps.
+const LULU_STAGES = ['Reading your question', 'Checking this step’s sources', 'Writing new steps into your lesson'];
+
+/** Lulu's reply bubble; the newest one streams in like it is being written. */
+function BotBubble({ text, typing, onGrow, onDone }) {
+  const shown = useTypewriter(text, { enabled: typing, cps: 120 });
+  const finished = !typing || shown.length >= text.length;
+  useEffect(() => {
+    if (typing) onGrow?.();
+  }, [typing, shown, onGrow]);
+  useEffect(() => {
+    if (typing && finished) onDone?.();
+  }, [typing, finished, onDone]);
+  return <div className={`bubble bot${finished ? '' : ' om-caret'}`}>{typing ? shown : text}</div>;
+}
+
 function Tutor({ sessionId, stepIndex, onLessonUpdated }) {
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [msgs, setMsgs] = useState([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [typingIdx, setTypingIdx] = useState(-1); // the reply currently being typed out
+  const [longRun, setLongRun] = useState(false); // the reply outlasted a plain answer → new steps
+  const thinking = usePacedStages(longRun ? 3 : 2, { stepMs: 1600 });
   const scrollRef = useRef(null);
+  const closeTimer = useRef(null);
+  const longTimer = useRef(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [msgs, open]);
+  }, [msgs, open, busy]);
+  useEffect(() => () => {
+    clearTimeout(closeTimer.current);
+    clearTimeout(longTimer.current);
+  }, []);
+
+  // keep the growing reply in view while it types
+  const stickToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+  const doneTyping = useCallback(() => setTypingIdx(-1), []);
+
+  const shown = open && !closing;
+  const openPanel = () => {
+    clearTimeout(closeTimer.current);
+    setClosing(false);
+    setOpen(true);
+  };
+  const closePanel = () => {
+    if (!open || closing) return;
+    setClosing(true);
+    closeTimer.current = setTimeout(() => {
+      setOpen(false);
+      setClosing(false);
+    }, PANEL_EXIT_MS);
+  };
 
   const send = async () => {
     const text = draft.trim();
@@ -542,14 +756,29 @@ function Tutor({ sessionId, stepIndex, onLessonUpdated }) {
     const next = [...msgs, { role: 'user', content: text }];
     setMsgs(next);
     setBusy(true);
+    setLongRun(false);
+    const decideMs = demoReplyMs('tutor_decide');
+    thinking.start({ expectMs: decideMs });
+    clearTimeout(longTimer.current);
+    if (decideMs != null) {
+      // still thinking after the slowest plain answer: she is expanding the lesson
+      longTimer.current = setTimeout(() => {
+        setLongRun(true);
+        thinking.retime(demoReplyMs('expand_steps'), { count: 3 });
+      }, demoReplyMaxMs(decideMs) + 60);
+    }
     try {
       const r = await api(`/api/sessions/${sessionId}/tutor`, {
         method: 'POST',
         body: { messages: next, stepIndex },
       });
+      clearTimeout(longTimer.current);
+      await thinking.finish();
+      setTypingIdx(next.length);
       setMsgs((m) => [...m, { role: 'assistant', content: r.text }]);
       if (r.updated && r.session) onLessonUpdated(r.session, r.updated, r.addedCount ?? 0);
     } catch (e) {
+      clearTimeout(longTimer.current);
       setMsgs((m) => [...m, { role: 'assistant', content: `(${e.message})` }]);
     } finally {
       setBusy(false);
@@ -559,15 +788,16 @@ function Tutor({ sessionId, stepIndex, onLessonUpdated }) {
   return (
     <>
       {open && (
-        <div className="tutor-panel">
+        <div className={`tutor-panel${closing ? ' om-v-leaving' : ''}`} data-demo="tutor-panel"
+          data-busy={busy} data-typing={typingIdx >= 0} data-count={msgs.length}>
           <div className="chat-window">
             <div className="lulu-head">
-              <span className="lulu-avatar">🐙</span>
+              <span className={`lulu-avatar${busy ? ' om-v-thinking-avatar' : ''}`}>🐙</span>
               <div>
                 <b>Lulu</b>
-                <span className="lulu-sub">your dive guide · can reshape this lesson</span>
+                <span className="lulu-sub">{busy ? 'thinking…' : 'your dive guide · can reshape this lesson'}</span>
               </div>
-              <button className="icon-btn" onClick={() => setOpen(false)} aria-label="Close Lulu" style={{ marginLeft: 'auto' }}>✕</button>
+              <button className="icon-btn" onClick={closePanel} aria-label="Close Lulu" style={{ marginLeft: 'auto' }} data-demo="tutor-close">✕</button>
             </div>
             <div className="chat-scroll" ref={scrollRef}>
               {msgs.length === 0 && (
@@ -578,22 +808,30 @@ function Tutor({ sessionId, stepIndex, onLessonUpdated }) {
                   rebuild the whole dive around it.
                 </p>
               )}
-              {msgs.map((m, mi) => (
-                <div key={mi} className={`bubble ${m.role === 'user' ? 'user' : 'bot'}`}>{m.content}</div>
+              {msgs.map((m, mi) => (m.role === 'user'
+                ? <div key={mi} className="bubble user">{m.content}</div>
+                : <BotBubble key={mi} text={m.content} typing={mi === typingIdx} onGrow={stickToBottom} onDone={doneTyping} />
               ))}
-              {busy && <div className="bubble bot">Lulu is working…</div>}
+              {busy && (
+                <div className="bubble bot om-v-thinking" data-demo="tutor-thinking">
+                  <Stages items={LULU_STAGES.slice(0, longRun ? 3 : 2)} current={thinking.at} className="om-v-mini" />
+                  <span className="om-v-sr">Lulu is working…</span>
+                </div>
+              )}
             </div>
             <div className="chat-input-row">
               <input value={draft} onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && send()}
-                placeholder="Ask Lulu, or tell her your goal…" aria-label="Ask Lulu" disabled={busy} />
-              <button className="btn btn--primary" onClick={send} disabled={busy || !draft.trim()}>Send</button>
+                placeholder="Ask Lulu, or tell her your goal…" aria-label="Ask Lulu" disabled={busy} autoFocus
+                data-demo="tutor-input" />
+              <button className="btn btn--primary" onClick={send} disabled={busy || !draft.trim()} data-demo="tutor-send">Send</button>
             </div>
           </div>
         </div>
       )}
-      <button className="tutor-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
-        {open ? 'Close Lulu ✕' : '🐙 Ask Lulu'}
+      <button className="tutor-toggle" onClick={() => (shown ? closePanel() : openPanel())} aria-expanded={shown}
+        data-demo="tutor-toggle" data-open={shown}>
+        {shown ? 'Close Lulu ✕' : '🐙 Ask Lulu'}
       </button>
     </>
   );
@@ -644,16 +882,18 @@ function FeedbackStage({ session, setStage, toast }) {
               </p>
               <div className="reason-row">
                 {REASONS.map((r) => (
-                  <button key={r} className={`reason-chip ${reasons.includes(r) ? 'on' : ''}`} onClick={() => toggleReason(r)}>{r}</button>
+                  <button key={r} className={`reason-chip ${reasons.includes(r) ? 'on' : ''}`} onClick={() => toggleReason(r)}
+                    data-demo="reason-chip" data-reason={r}>{r}</button>
                 ))}
               </div>
               <textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)}
-                placeholder="Tell us more in your own words (optional, but it really helps)…" maxLength={2000} />
+                placeholder="Tell us more in your own words (optional, but it really helps)…" maxLength={2000}
+                data-demo="feedback-note" />
             </div>
           )}
           <div className="center mt-2">
             <button className="btn btn--primary" onClick={submit}
-              disabled={busy || rating === null || (unhappy && reasons.length === 0 && !note.trim())}>
+              disabled={busy || rating === null || (unhappy && reasons.length === 0 && !note.trim())} data-demo="feedback-send">
               {busy ? <Spinner /> : 'Send feedback'}
             </button>
             {unhappy && reasons.length === 0 && !note.trim() && (
@@ -668,14 +908,15 @@ function FeedbackStage({ session, setStage, toast }) {
 
 function HappyStage({ navigate }) {
   return (
-    <div className="page page--narrow">
+    <div className="page page--narrow om-v-cheer">
+      <BubbleBurst seed="happy" count={30} />
       <Reveal>
         <EmptyState emoji="🎉">
           <h1 className="hero-title" style={{ fontSize: '2.2rem' }}>We’re happy we helped you!</h1>
           <p className="lede" style={{ margin: '0.8rem auto 0' }}>
             Thanks for diving with OceanMind. The ocean is deep — come back for another topic anytime.
           </p>
-          <button className="btn btn--primary mt-3" onClick={() => navigate('/')}>
+          <button className="btn btn--primary mt-3" onClick={() => navigate('/')} data-demo="happy-explore">
             Explore another dive <span className="btn-orb">→</span>
           </button>
         </EmptyState>
@@ -684,9 +925,13 @@ function HappyStage({ navigate }) {
   );
 }
 
+const SUPPORT_TRACK = ['Report sent to support', 'A human reviews your session', 'The agent rebuilds your dive', 'Delivered by email and right here'];
+
 function AwaitingStage({ navigate }) {
+  // the report visibly "lands": sent ticks, then review is in progress
+  const at = useStages(2, { running: true, stepMs: 900 });
   return (
-    <div className="page page--narrow">
+    <div className="page page--narrow om-v-await">
       <Reveal>
         <EmptyState emoji="🛟">
           <h1 className="hero-title" style={{ fontSize: '2.1rem' }}>Your report reached our support team.</h1>
@@ -695,7 +940,10 @@ function AwaitingStage({ navigate }) {
             scratch — delivered by <b>email</b> and waiting <b>right here</b> in your account.
             Watch the bell at the top.
           </p>
-          <button className="btn btn--ghost mt-3" onClick={() => navigate('/')}>← Back to topics</button>
+          <div className="om-v-track" role="status" data-demo="support-track">
+            <Stages items={SUPPORT_TRACK} current={at} />
+          </div>
+          <button className="btn btn--ghost mt-3" onClick={() => navigate('/')} data-demo="awaiting-back">← Back to topics</button>
         </EmptyState>
       </Reveal>
     </div>
@@ -705,7 +953,7 @@ function AwaitingStage({ navigate }) {
 function ClosedStage({ session, navigate }) {
   const summary = session.summary;
   return (
-    <div className="page">
+    <div className="page om-v-closed">
       <Reveal>
         <div className="center">
           <span className="eyebrow">📦 Dive complete</span>
@@ -719,16 +967,12 @@ function ClosedStage({ session, navigate }) {
       </Reveal>
       {summary && (
         <Reveal delay={120}>
-          <div className="log-cols">
-            <div className="log-col learned"><h4>🌊 What you learned</h4><ul>{summary.learned.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
-            <div className="log-col built"><h4>🔧 What you built</h4><ul>{summary.built.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
-            <div className="log-col next"><h4>🧭 Where to dive next</h4><ul>{summary.nextSteps.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
-          </div>
+          <LogCols summary={summary} />
         </Reveal>
       )}
       <Reveal delay={200}>
         <div className="center mt-3">
-          <button className="btn btn--primary" onClick={() => navigate('/')}>Start a new dive <span className="btn-orb">→</span></button>
+          <button className="btn btn--primary" onClick={() => navigate('/')} data-demo="closed-new">Start a new dive <span className="btn-orb">→</span></button>
         </div>
       </Reveal>
     </div>

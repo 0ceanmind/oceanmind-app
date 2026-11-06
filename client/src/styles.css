@@ -611,8 +611,10 @@ input, textarea, select { font-family: inherit; }
   top: 50%;
   transform: translateY(-50%);
   z-index: 30;
-  animation: stepIn 0.8s var(--ease) both;
+  /* own keyframe: stepIn ends at transform:none, which un-centred the rail */
+  animation: omVRailIn 0.8s var(--ease) both;
 }
+@keyframes omVRailIn { from { opacity: 0; transform: translate(-14px, -50%); } to { opacity: 1; transform: translateY(-50%); } }
 .jrail-track {
   position: relative;
   width: 40px;
@@ -627,10 +629,12 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  overflow: hidden;
+  /* no overflow clip here: it hid every .jrail-tip (they sit outside the
+     40px track). The decorations clip themselves in .jrail-deco instead. */
 }
+.jrail-deco { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
 /* light rays from the surface + drifting bubbles inside the rail */
-.jrail-track::before {
+.jrail-deco::before {
   content: '';
   position: absolute; inset: 0;
   background:
@@ -638,7 +642,7 @@ input, textarea, select { font-family: inherit; }
     radial-gradient(10px 90px at 62% 4%, rgba(255, 238, 170, 0.12), transparent 70%);
   pointer-events: none;
 }
-.jrail-track::after {
+.jrail-deco::after {
   content: '';
   position: absolute; left: 50%; bottom: 30px;
   width: 5px; height: 5px; margin-left: -8px;
@@ -660,17 +664,31 @@ input, textarea, select { font-family: inherit; }
   pointer-events: none;
 }
 @keyframes jWave { 0%,100% { transform: translateX(-2px); } 50% { transform: translateX(2px); } }
+/* runs from the first station's centre (~38px down) to the current one:
+   --f is current / (steps - 1); station centres span the track minus ~90px */
 .jrail-fill {
   position: absolute;
-  top: 26px;
+  top: 38px;
   left: 50%;
   transform: translateX(-50%);
   width: 3px;
-  max-height: calc(100% - 66px);
+  height: calc((100% - 90px) * var(--f, 0));
   background: linear-gradient(180deg, var(--accent-soft), var(--accent-deep));
   border-radius: 999px;
   transition: height 0.7s var(--ease);
   box-shadow: 0 0 8px rgba(22, 184, 216, 0.6);
+}
+.jrail-fill::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  box-shadow: 0 0 10px rgba(22, 184, 216, 0.85);
 }
 .jrail-stops {
   position: absolute;
@@ -730,9 +748,17 @@ input, textarea, select { font-family: inherit; }
   color: var(--ink);
   line-height: 1.2;
   box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.8);
-  animation: stepIn 0.25s var(--ease) both;
+  animation: omVTipIn 0.25s var(--ease) both;
   pointer-events: none;
 }
+@keyframes omVTipIn { from { opacity: 0; transform: translate(-6px, -50%); } to { opacity: 1; transform: translateY(-50%); } }
+/* arriving at a station: the tip announces it for ~2.4s, then gets out of the lesson's way */
+.jrail-tip.om-v-announce { animation: omVTipIn 0.3s var(--ease) both, omVTipOut 0.45s var(--ease) 2.4s forwards; }
+/* the announcement never covers the lesson: it stays inside the free left
+   gutter (--room, measured by DiveJourney), shrinking to "3 / 8" when narrow */
+.jrail-tip.om-v-announce { max-width: var(--room, 320px); overflow: hidden; text-overflow: ellipsis; }
+.jrail-tip.om-v-announce.om-v-compact { padding: 0.3rem 0.6rem; font-variant-numeric: tabular-nums; }
+@keyframes omVTipOut { to { opacity: 0; transform: translate(-6px, -50%); } }
 .jrail-tip b { color: var(--accent-soft); }
 .jrail-treasure {
   position: absolute;
@@ -743,7 +769,10 @@ input, textarea, select { font-family: inherit; }
   pointer-events: none;
 }
 @keyframes jTreasure { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-@media (max-width: 1150px) { .jrail { display: none; } }
+/* visible down to 1024px (projectors); between 1024 and 1150 the lesson
+   page makes room for it on the left */
+@media (max-width: 1023px) { .jrail { display: none; } }
+@media (min-width: 1024px) and (max-width: 1150px) { .page.om-v-lesson { padding-left: 84px; } }
 
 /* ---------- dive log (summary) ---------- */
 
@@ -860,7 +889,15 @@ input, textarea, select { font-family: inherit; }
 .concept--toggle .chev { display: inline-block; font-size: 0.6rem; color: var(--accent-soft); transition: transform 0.4s var(--ease-spring); vertical-align: middle; margin-left: 0.25rem; }
 .concept--toggle.open .chev { transform: rotate(90deg); }
 .concept--toggle.open b { margin-bottom: 0.35rem; }
-.concept--toggle span:not(.chev) { animation: stepIn 0.35s var(--ease) both; display: block; }
+/* the detail is always rendered and slides open/closed (grid 0fr → 1fr) */
+.concept--toggle .om-v-desc {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.45s var(--ease), opacity 0.35s var(--ease);
+}
+.concept--toggle .om-v-desc > span { display: block; min-height: 0; overflow: hidden; }
+.concept--toggle.open .om-v-desc { grid-template-rows: 1fr; opacity: 1; }
 .concept--gap b::after { content: ' · focus area'; color: var(--coral); font-size: 0.78rem; }
 
 /* ---------- assessment ---------- */
@@ -922,7 +959,7 @@ input, textarea, select { font-family: inherit; }
   left: 50%;
   top: 0;
   transform: translate(-50%, -50%);
-  transition: top 2.6s var(--ease);
+  /* moved by useDive (ui.jsx) on a timer, in lockstep with the metres readout */
   z-index: 2;
   filter: drop-shadow(0 0 14px rgba(127, 216, 232, 0.65));
 }
@@ -1177,8 +1214,9 @@ input[type='range'] { accent-color: var(--accent); width: 130px; }
   width: 100%;
 }
 .report-row:hover { border-color: var(--hairline-strong); transform: translateX(4px); }
-.report-row .who { color: #fff; font-weight: 600; font-size: 0.98rem; }
-.report-row .what { color: var(--ink-dim); font-size: 0.86rem; margin-top: 0.2rem; }
+/* block: the title and its detail line ran together inline ("AI Agents817 m …") */
+.report-row .who { display: block; color: #fff; font-weight: 600; font-size: 0.98rem; }
+.report-row .what { display: block; color: var(--ink-dim); font-size: 0.86rem; margin-top: 0.2rem; }
 .status-pill { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; padding: 0.32rem 0.75rem; border-radius: 999px; }
 .status-pill.new { background: rgba(255, 138, 107, 0.14); color: var(--coral); border: 1px solid rgba(255, 138, 107, 0.4); }
 .status-pill.resolved { background: rgba(53, 208, 165, 0.12); color: var(--kelp); border: 1px solid rgba(53, 208, 165, 0.35); }
@@ -1276,8 +1314,10 @@ input[type='range'] { accent-color: var(--accent); width: 130px; }
 }
 .empty .big { font-size: 2rem; display: block; margin-bottom: 0.6rem; }
 
-.reveal { opacity: 0; transform: translateY(22px); filter: blur(6px); transition: opacity 0.9s var(--ease), transform 0.9s var(--ease), filter 0.9s var(--ease); }
+.reveal { opacity: 0; transform: translateY(16px); filter: blur(3px); transition: opacity 0.6s var(--ease), transform 0.6s var(--ease), filter 0.6s var(--ease); }
 .reveal.in { opacity: 1; transform: none; filter: none; }
+/* pitch demo: snappier, and no blur repaint over live canvases */
+html[data-demo='1'] .reveal { filter: none; transition-duration: 0.45s; }
 
 .section-gap { margin-top: 3.4rem; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
@@ -1300,4 +1340,210 @@ input[type='range'] { accent-color: var(--accent); width: 130px; }
   .ask-row { flex-direction: column; }
   .core { padding: 1.2rem; }
   .faces { gap: 0.5rem; }
+}
+/* phones: the nav pill must fit inside 375px */
+@media (max-width: 400px) {
+  .nav { gap: 0.1rem; padding: 0.35rem 0.4rem; top: 0.9rem; }
+  .nav-brand { padding: 0.35rem 0.45rem; font-size: 0.92rem; gap: 0.35rem; }
+  .nav-link { padding: 0.45rem 0.42rem; font-size: 0.76rem; }
+  .nav-bell { padding: 0.45rem 0.35rem; }
+}
+
+/* =====================================================================
+   Views: motion, feedback and polish. Built on the motion.css primitives
+   (stepIn, omPop, omFlash, .om-stages …); new classes use the om-v- prefix.
+   Entrances use fill-mode `backwards` wherever the element also has an
+   interactive transform (:active, :hover), so nothing is pinned afterwards.
+   ===================================================================== */
+
+/* ---------- page + stage hand-offs ---------- */
+
+/* Stage swaps inside a dive fade on opacity only, so fixed children
+   (dive rail, Lulu, modals) keep the viewport as their containing block. */
+.om-v-stage { animation: omVFade 0.4s var(--ease) backwards; }
+@keyframes omVFade { from { opacity: 0; } }
+.om-v-loading { padding-top: 22vh; }
+
+/* A page gliding out before the next route takes over (sign-in, Home). */
+.om-v-leave { animation: omVLeave 0.34s var(--ease) forwards; pointer-events: none; }
+@keyframes omVLeave { to { opacity: 0; transform: translateY(-10px); } }
+
+/* Fast directional swap for quiz questions and lesson steps
+   (replaces the heavy blur reveal on every Next). */
+.om-v-swap { animation: omVSlide 0.36s var(--ease) backwards; }
+.om-v-swap.om-v-back { animation-name: omVSlideBack; }
+@keyframes omVSlide { from { opacity: 0; transform: translateX(24px); } }
+@keyframes omVSlideBack { from { opacity: 0; transform: translateX(-24px); } }
+
+/* ---------- agent checklists (.om-stages) ---------- */
+
+.om-v-stages li { animation: stepIn 0.4s var(--ease) backwards; animation-delay: calc(var(--i, 0) * 90ms); }
+.om-v-stages li.done::before { animation: omVTick 0.45s var(--ease-spring); }
+@keyframes omVTick { 0% { transform: scale(0.6); } 60% { transform: scale(1.25); } 100% { transform: none; } }
+
+/* ---------- Home ---------- */
+
+.suggest-row { max-height: 12rem; transition: max-height 0.45s var(--ease), opacity 0.3s var(--ease), margin-top 0.45s var(--ease); }
+.suggest-row.om-v-gone { max-height: 0; opacity: 0; margin-top: 0; overflow: hidden; pointer-events: none; }
+.om-v-compiling b { display: block; }
+.om-v-compiling .om-stages { margin-top: 0.75rem; }
+.om-v-glyph {
+  flex: 0 0 auto;
+  width: 2.4rem; height: 2.4rem;
+  border-radius: 0.8rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent-soft);
+  background: rgba(22, 184, 216, 0.12);
+  border: 1px solid var(--hairline-strong);
+  animation: jBob 2.2s var(--ease) infinite;
+}
+
+/* ---------- knowledge map: concepts land one by one, as if just compiled ---------- */
+
+.om-v-compile { animation: omVCompile 0.6s var(--ease) backwards; animation-delay: calc(280ms + var(--i, 0) * 140ms); }
+@keyframes omVCompile {
+  from { opacity: 0; transform: translateY(10px); box-shadow: inset 3px 0 0 var(--accent); }
+  60% { opacity: 1; transform: none; background: rgba(22, 184, 216, 0.1); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px rgba(22, 184, 216, 0.25); }
+  to { box-shadow: inset 0 0 0 transparent; }
+}
+
+/* ---------- quiz ---------- */
+
+.om-v-tally { display: flex; justify-content: flex-end; align-items: center; gap: 0.4rem; margin: -1.55rem 0 1.5rem; }
+.om-v-tally i {
+  width: 0.55rem; height: 0.55rem; border-radius: 50%;
+  background: rgba(127, 216, 232, 0.1);
+  border: 1px solid var(--hairline-strong);
+  transition: background 0.4s var(--ease), border-color 0.4s var(--ease), box-shadow 0.4s var(--ease);
+}
+.om-v-tally i.now { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(22, 184, 216, 0.16); }
+.om-v-tally i.right { background: var(--kelp); border-color: transparent; animation: omPop 0.5s var(--ease-spring) both; }
+.om-v-tally i.wrong { background: var(--danger); border-color: transparent; animation: omPop 0.5s var(--ease-spring) both; }
+.om-v-tally i.skip { background: transparent; border: 1px dashed var(--ink-dim); animation: omPop 0.5s var(--ease-spring) both; }
+.option .key .spinner { width: 0.9rem; height: 0.9rem; }
+/* after a wrong pick the shake plays first, then the right answer pops */
+.option.om-correct.om-v-late { animation-delay: 0.3s; }
+
+/* ---------- depth reveal ---------- */
+
+.om-v-callout { min-height: 1.1rem; margin-bottom: 0.55rem; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; color: var(--accent-soft); }
+.depth-readout .depth-num { font-variant-numeric: tabular-nums; }
+.om-v-settle { opacity: 0; transform: translateY(6px) scale(0.97); transition: opacity 0.5s var(--ease), transform 0.6s var(--ease-spring); }
+.om-v-settle.in { opacity: 1; transform: none; }
+.gauge-zone { transition: color 0.4s var(--ease), border-color 0.4s var(--ease); }
+.gauge-zone.om-v-hit { color: var(--accent-soft); border-top-color: rgba(127, 216, 232, 0.7); animation: omVZoneHit 1.2s var(--ease); }
+@keyframes omVZoneHit { from { background: rgba(22, 184, 216, 0.3); } }
+.om-v-build { margin-top: 1rem; }
+.om-v-build .om-stages { margin-top: 0.5rem; }
+
+/* ---------- lesson ---------- */
+
+.badge--live.om-v-shimmer { position: relative; overflow: hidden; }
+.badge--live.om-v-shimmer::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.3) 50%, transparent 70%);
+  transform: translateX(-120%);
+  animation: omVShimmer 3.6s var(--ease) 1s infinite;
+  pointer-events: none;
+}
+@keyframes omVShimmer { 0% { transform: translateX(-120%); } 45%, 100% { transform: translateX(120%); } }
+
+/* steps Lulu just inserted: they grow into the progress bar / pop onto the rail and pulse */
+.walk-progress span.om-v-new { transform-origin: left center; animation: omVSegIn 0.55s var(--ease) backwards, omFlash 1.4s var(--ease) 2; }
+@keyframes omVSegIn { from { opacity: 0; transform: scaleX(0); } }
+.jrail-stop.om-v-new { animation: omVStopIn 0.55s var(--ease-spring) backwards; }
+@keyframes omVStopIn { from { opacity: 0; transform: scale(0.2); } }
+.jrail-stop.om-v-new .jrail-dot { animation: omFlash 1.4s var(--ease) 2; }
+.jrail-stop.now.om-v-new .jrail-dot { animation: jBob 2.2s var(--ease) infinite, omFlash 1.4s var(--ease) 2; }
+
+/* ---------- Lulu ---------- */
+
+.tutor-panel.om-v-leaving { animation: omVPanelOut 0.26s var(--ease) forwards; pointer-events: none; }
+@keyframes omVPanelOut { to { opacity: 0; transform: translateY(18px) scale(0.97); } }
+.bubble.om-v-thinking { display: inline-flex; align-items: center; padding: 0.7rem 0.95rem; }
+/* what Lulu is doing right now: a compact agent checklist inside her bubble */
+.bubble.om-v-thinking .om-stages { margin: 0; gap: 0.32rem; }
+.om-v-mini li { font-size: 0.8rem; gap: 0.5rem; }
+.om-v-mini li::before { width: 0.78rem; height: 0.78rem; }
+.lulu-avatar.om-v-thinking-avatar { animation: jBob 0.9s var(--ease) infinite; box-shadow: 0 0 12px rgba(22, 184, 216, 0.5); }
+.om-v-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- dive log: items surface one by one, like treasure ---------- */
+
+.om-v-writing { padding-top: 16vh; }
+.om-v-writing-list { display: flex; justify-content: center; margin-top: 1.4rem; }
+.om-v-writing-list .om-stages { text-align: left; }
+.om-v-log .log-col { animation: omVColIn 0.5s var(--ease) backwards; animation-delay: calc(var(--c, 0) * 110ms); }
+@keyframes omVColIn { from { opacity: 0; transform: translateY(12px); } }
+.om-v-log .log-col li { animation: omVTreasure 0.75s var(--ease) backwards; animation-delay: calc(260ms + var(--i, 0) * 110ms); }
+@keyframes omVTreasure {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  55% { opacity: 1; transform: none; text-shadow: 0 0 14px rgba(255, 217, 122, 0.55); }
+  to { text-shadow: none; }
+}
+.om-v-log .log-col li::before { animation: omVGlint 0.75s var(--ease) backwards; animation-delay: calc(260ms + var(--i, 0) * 110ms); }
+@keyframes omVGlint { from { color: rgb(255, 217, 122); transform: scale(1.7); } }
+.om-v-logpreview .log-cols { margin-top: 0.8rem; }
+
+/* ---------- feedback ---------- */
+
+.face.picked { animation: omVFacePick 0.6s var(--ease-spring); }
+@keyframes omVFacePick { 0% { transform: scale(1); } 35% { transform: scale(1.3) rotate(-8deg); } 65% { transform: scale(1.04) rotate(4deg); } 100% { transform: scale(1.1); } }
+.reason-chip.on { animation: omVTap 0.4s var(--ease-spring); }
+@keyframes omVTap { 40% { transform: scale(1.08); } }
+
+/* ---------- end states ---------- */
+
+.om-v-cheer .empty .big { font-size: 2.6rem; animation: omVCheer 0.9s var(--ease-spring) backwards; }
+@keyframes omVCheer { from { opacity: 0; transform: scale(0.3) rotate(-20deg); } 60% { opacity: 1; transform: scale(1.25) rotate(8deg); } }
+.om-v-cheer .empty .hero-title { animation: stepIn 0.6s var(--ease) 0.25s backwards; }
+.om-v-cheer .empty .lede { animation: stepIn 0.6s var(--ease) 0.4s backwards; }
+.om-v-cheer .empty .btn { animation: stepIn 0.6s var(--ease) 0.55s backwards; }
+.om-v-await .empty .big { display: inline-block; animation: jBob 2.6s var(--ease) infinite; }
+.om-v-track { display: flex; justify-content: center; margin-top: 1.4rem; }
+.om-v-track .om-stages { text-align: left; }
+
+/* ---------- logbook / projects / notifications ---------- */
+
+.om-v-depth-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  margin-right: 0.45rem; padding: 0.1rem 0.55rem;
+  border-radius: 999px; border: 1px solid var(--hairline-strong);
+  font-size: 0.76rem; font-weight: 700; line-height: 1.5;
+  color: var(--accent-soft); background: rgba(127, 216, 232, 0.1);
+}
+/* the zone atmospheres' own colours (body[data-zone] orbs) */
+.om-v-depth-chip.sunlight { background: rgba(22, 184, 216, 0.16); border-color: rgba(127, 216, 232, 0.45); }
+.om-v-depth-chip.twilight { background: rgba(14, 116, 168, 0.3); border-color: rgba(22, 184, 216, 0.5); }
+.om-v-depth-chip.midnight { background: rgba(93, 55, 170, 0.28); border-color: rgba(93, 55, 170, 0.6); color: var(--ink); }
+.report-row.om-v-removing { animation: omVRowOut 0.3s var(--ease) forwards; pointer-events: none; }
+@keyframes omVRowOut { to { opacity: 0; transform: translateX(14px); } }
+.notif-row.unread { animation: omFlash 1.4s var(--ease) 0.5s 2; }
+.om-v-unread-dot {
+  flex: 0 0 auto; width: 9px; height: 9px; margin-top: 0.4rem;
+  border-radius: 50%; background: var(--coral);
+  box-shadow: 0 0 10px rgba(255, 138, 107, 0.6);
+  animation: pulse 2s var(--ease) infinite;
+  transition: opacity 0.4s var(--ease), transform 0.4s var(--ease);
+}
+.om-v-unread-dot.read { opacity: 0; transform: scale(0.4); animation: none; }
+
+/* ---------- modal exit ---------- */
+
+.modal-backdrop.om-v-leaving { animation: omVFadeOut 0.26s var(--ease) forwards; pointer-events: none; }
+.modal-backdrop.om-v-leaving .modal { animation: omVModalOut 0.26s var(--ease) forwards; }
+@keyframes omVFadeOut { to { opacity: 0; } }
+@keyframes omVModalOut { to { opacity: 0; transform: translateY(18px) scale(0.97); } }
+
+/* ---------- reduced motion (never in the pitch demo: see motion.js) ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-demo='1']) .reveal { transform: none; filter: none; transition: opacity 0.3s linear; }
+  html:not([data-demo='1']) .om-v-swap,
+  html:not([data-demo='1']) .om-v-compile,
+  html:not([data-demo='1']) .om-v-log .log-col,
+  html:not([data-demo='1']) .om-v-log .log-col li,
+  html:not([data-demo='1']) .om-v-log .log-col li::before,
+  html:not([data-demo='1']) .badge--live.om-v-shimmer::after { animation: none; }
 }

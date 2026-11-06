@@ -7,3 +7,5 @@ server/data/
 .env.local
 .vercel/
 .DS_Store
+.audit/
+.backup-pre-recovery/

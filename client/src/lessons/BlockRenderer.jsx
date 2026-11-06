@@ -18,9 +18,17 @@ import PatternExplorerBlock from './blocks/PatternExplorerBlock.jsx';
 const NN_DEFAULT = { dataset: 'blobs', hidden: [4], lr: 0.03, showLayers: true, showLR: true };
 const CB_DEFAULT = { starterIntents: 'basic', showMatching: true, liveCompare: true };
 
-/** Renders one interactive block from a lesson's JSON (or a catalog sample). */
+/**
+ * Renders one interactive block from a lesson's JSON (or a catalog sample), wrapped in
+ * <div data-block={type}> so the pitch-demo director can scope its lookups to one block.
+ */
 export default function BlockRenderer({ block, session }) {
   if (!block) return null;
+  const el = renderBlock(block, session);
+  return el ? <div data-block={block.type}>{el}</div> : null;
+}
+
+function renderBlock(block, session) {
   const topicId = session?.topicId;
   switch (block.type) {
     case 'neuron': return <NeuronBlock />;

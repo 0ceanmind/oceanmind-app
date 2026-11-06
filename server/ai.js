@@ -5,11 +5,14 @@
  *   - anthropic   (Anthropic API keys)
  *   - openrouter  (OpenRouter keys — any model on openrouter.ai)
  *   - mock        (deterministic test provider; only enabled with OCEANMIND_TEST_AI=1)
+ *   - replay      (scripted pitch-demo provider; only enabled with OCEANMIND_DEMO=1,
+ *                  see server/aireplay.js — the real routes, validators and tools still run)
  *
  * Keys never reach the client. All calls go through aiChat/aiJson.
  */
 import { db, T } from './db.js';
 import { mockChat } from './aimock.js';
+import { isDemoMode } from './demo/index.js';
 
 export const PROVIDERS = {
   gemini: {
@@ -36,7 +39,7 @@ export const PROVIDERS = {
 
 const CONFIG_KEY = 'ai_config';
 
-/** Config precedence: test mock → env vars (Vercel) → DB (admin page). */
+/** Config precedence: test mock → demo replay → env vars (Vercel) → DB (admin page). */
 function envConfig() {
   const envKey = process.env.OCEANMIND_AI_KEY
     || process.env.DEEPSEEK_API_KEY || process.env.GEMINI_API_KEY
@@ -53,6 +56,8 @@ function envConfig() {
 
 export async function getAiConfig() {
   if (process.env.OCEANMIND_TEST_AI === '1') return { provider: 'mock', apiKey: 'test', model: 'mock-1' };
+  // pitch demo: after the mock (tests stay on it), before env/DB (no real key is ever used)
+  if (isDemoMode()) return { provider: 'replay', apiKey: 'none', model: 'oceanmind-demo' };
   const env = envConfig();
   if (env) return env;
   const row = await db.get(`SELECT value FROM ${T.meta} WHERE key = ?`, [CONFIG_KEY]);
@@ -128,6 +133,11 @@ export async function aiChat(system, messages, opts = {}) {
   const maxTokens = opts.maxTokens ?? 3000;
 
   if (cfg.provider === 'mock') return mockChat(system, messages);
+  if (cfg.provider === 'replay') {
+    // loaded on demand so the demo corpus never loads outside demo mode
+    const { replayChat } = await import('./aireplay.js');
+    return replayChat(system, messages, opts);
+  }
 
   if (cfg.provider === 'gemini') {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`;
@@ -254,6 +264,7 @@ export async function aiJson(system, userPrompt, validate, opts = {}) {
 
 /** Admin "Test connection": round-trip against the proposed config, no persistence. */
 export async function testConfig({ provider, apiKey, model }) {
+  if (provider === 'replay' && isDemoMode()) return { ok: true, sample: 'OK' };
   if (!PROVIDERS[provider]) throw Object.assign(new Error('Unknown provider.'), { status: 400 });
   if (typeof apiKey !== 'string' || apiKey.trim().length < 8) {
     throw Object.assign(new Error('That API key looks too short.'), { status: 400 });

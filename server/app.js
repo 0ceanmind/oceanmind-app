@@ -2,7 +2,7 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, T } from './db.js';
+import { db, T, demoReset } from './db.js';
 import { setUserCookie, clearUserCookie, getUser, requireUser } from './auth.js';
 import { TOPICS, ZONES, getTopic } from './content/topics.js';
 import { BLOCK_CATALOG } from './content/blockCatalog.js';
@@ -13,6 +13,7 @@ import { compileKnowledgeMap, generateQuestions, generateLesson, generateSummary
 import { AGENT_TOOLS, runTool } from './lib/agentTools.js';
 import { runFlow, validateFlow } from './lib/flowRun.js';
 import { rebuildEmailHtml } from './emailTemplate.js';
+import { isDemoMode, DEMO_PERSONA, DEMO_USER_ID, DEMO_SEED_MAX_IDS, REPLAY_PROVIDER, demoSpeed, demoStatus, demoNextId } from './demo/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -21,7 +22,14 @@ const FEEDBACK_REASONS = ['Too easy', 'Too hard', 'Repetitive', 'Wrong topic', '
 
 // ---------------------------------------------------------------- helpers
 
+/** A path/body id that can name a row: a positive safe integer, else null. */
+function rowId(v) {
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
 async function sessionRow(id) {
+  if (!rowId(id)) return undefined; // 'abc', 1e20, -1 … are never a session (and never reach the driver)
   return db.get(
     `SELECT s.*, u.name AS user_name, u.email AS user_email
      FROM ${T.learning_sessions} s JOIN ${T.users} u ON u.id = s.user_id
@@ -42,7 +50,7 @@ async function sessionForLearner(s) {
     id: s.id, topicId: s.topic_id, topicTitle: topic.title, topicIcon: topic.icon,
     version: s.version, status: s.status, zone: s.zone, depth: s.depth, score: s.score,
     rebuiltFrom: s.rebuilt_from, supportNote: s.support_note, createdAt: s.created_at,
-    knowledgeMap: parse(s.knowledge_map, null), zones: ZONES,
+    knowledgeMap: parse(s.knowledge_map, null), zones: ZONES, goal: s.goal ?? null,
   };
   if (s.status === 'assessment') {
     const questions = parse(s.questions, []);
@@ -76,6 +84,122 @@ async function requireAi(_req, res, next) {
   } catch (e) { next(e); }
 }
 
+// ---------------------------------------------------------------- demo mode helpers
+
+// Serverless self-healing: each instance holds its own in-memory DB, so session
+// responses carry the raw row (`_row`) and the client can put it back on an
+// instance that never saw it (POST /api/demo/restore).
+const SESSION_JSON_COLS = ['knowledge_map', 'questions', 'answered', 'lesson', 'summary', 'assessment_answers', 'concept_scores'];
+const SESSION_RESTORE_COLS = ['user_id', 'topic_id', 'version', 'status', 'score', 'depth', 'zone', 'rebuilt_from', 'support_note', 'goal',
+  'created_at', 'updated_at', ...SESSION_JSON_COLS];
+const SESSION_STATUSES = ['assessment', 'compiling', 'lesson', 'closed', 'awaiting_rebuild'];
+const SESSION_NOT_NULL = ['user_id', 'topic_id', 'version', 'status', 'created_at', 'updated_at'];
+
+/**
+ * INSERT returning { id }. In demo mode the id is always pinned (demoNextId):
+ * above every seeded id, so a re-seed can never collide with a live row, and
+ * time-based on serverless, so two instances don't hand out the same id.
+ */
+async function insertRow(table, cols, values) {
+  const pinned = isDemoMode();
+  const allCols = pinned ? ['id', ...cols] : cols;
+  const allValues = pinned ? [await demoNextId(db, table), ...values] : values;
+  return db.insert(`INSERT INTO ${table} (${allCols.join(', ')}) VALUES (${allCols.map(() => '?').join(', ')})`, allValues);
+}
+
+/** The om_learning_sessions row as stored, with its JSON columns parsed (answer keys included). */
+async function rawSessionRow(id) {
+  const row = await db.get(`SELECT * FROM ${T.learning_sessions} WHERE id = ?`, [id]);
+  if (!row) return null;
+  const out = { ...row };
+  for (const k of SESSION_JSON_COLS) out[k] = parse(row[k], null);
+  return out;
+}
+
+const missingSession = (res) => res.status(404).json({ error: 'Session not found.', code: 'DEMO_SESSION_MISSING' });
+
+/**
+ * Demo only, mounted on /api/sessions:
+ *  - /api/sessions/:id[/*] for a signed-in caller whose id this instance has
+ *    never seen answers 404 DEMO_SESSION_MISSING before any route runs, so every
+ *    route (answer, build-lesson, tutor, summary, feedback, GET …) heals the
+ *    same way whatever it validates first. Signed-out callers fall through to
+ *    the route's 401.
+ *  - success bodies get `_row` (read after the handler's writes), and a 404 for
+ *    a row that vanished mid-request gets the code too. A session that exists
+ *    but belongs to someone else stays a plain 404.
+ * Normal mode passes straight through.
+ */
+async function demoSessionRows(req, res, next) {
+  if (!isDemoMode()) return next();
+  const rawId = /^\/(\d+)(?:\/|$)/.exec(req.path)?.[1];
+  const pathId = rawId ? rowId(rawId) : null;
+  try {
+    if (pathId && (await getUser(req)) && !(await db.get(`SELECT id FROM ${T.learning_sessions} WHERE id = ?`, [pathId]))) {
+      return missingSession(res);
+    }
+  } catch (e) {
+    return next(e);
+  }
+  const send = res.json.bind(res);
+  res.json = (body) => {
+    const id = pathId ?? (rowId(body?.session?.id));
+    if (!id || !body || typeof body !== 'object' || Array.isArray(body)) return send(body);
+    (async () => {
+      if (res.statusCode === 404) {
+        if (!pathId || body.code) return send(body);
+        const exists = await db.get(`SELECT id FROM ${T.learning_sessions} WHERE id = ?`, [id]);
+        return send(exists ? body : { ...body, code: 'DEMO_SESSION_MISSING' });
+      }
+      if (res.statusCode >= 400) return send(body);
+      const row = await rawSessionRow(id);
+      return send(row ? { ...body, _row: row } : body);
+    })().catch(() => send(body));
+    return res;
+  };
+  next();
+}
+
+/** A restored JSON column: parsed objects pass through, strings are parsed (INVALID_JSON when they don't parse). */
+const INVALID_JSON = Symbol('invalid json');
+const parseColumn = (v) => {
+  if (v === undefined || v === null || typeof v !== 'string') return v;
+  try { return JSON.parse(v); } catch { return INVALID_JSON; }
+};
+
+/** The JSON shape each session column must have for the routes to run on a restored row. */
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const RESTORE_SHAPES = {
+  knowledge_map: isObj,
+  questions: (v) => Array.isArray(v) && v.every((q) => isObj(q) && typeof q.id === 'string' && Array.isArray(q.options)),
+  answered: (v) => Array.isArray(v) && v.every(isObj),
+  lesson: (v) => isObj(v) && Array.isArray(v.steps) && v.steps.every(isObj),
+  summary: isObj,
+  assessment_answers: () => true,
+  concept_scores: () => true,
+};
+
+/**
+ * Check a `_row` before it is written back: JSON columns must parse into the
+ * shapes the routes read, and the columns the row's status relies on must be
+ * there. Returns an error message, or null. `values` are the parsed columns.
+ */
+function restoreProblem(row, values) {
+  for (const c of SESSION_JSON_COLS) {
+    if (values[c] === undefined || values[c] === null) continue;
+    if (values[c] === INVALID_JSON) return `Column ${c} is not valid JSON.`;
+    if (!RESTORE_SHAPES[c](values[c])) return `Column ${c} has the wrong shape.`;
+  }
+  for (const c of ['version', 'depth']) {
+    if (row[c] != null && !Number.isSafeInteger(Number(row[c]))) return `Column ${c} must be an integer.`;
+  }
+  if (row.score != null && !Number.isFinite(Number(row.score))) return 'Column score must be a number.';
+  if (row.zone != null && !ZONES[row.zone]) return 'Unknown zone.';
+  if (row.status === 'assessment' && !values.questions) return 'An assessment needs its questions.';
+  if (['lesson', 'closed', 'awaiting_rebuild'].includes(row.status) && !values.lesson) return 'A finished dive needs its lesson.';
+  return null;
+}
+
 // ---------------------------------------------------------------- app
 
 export function createApp() {
@@ -96,7 +220,8 @@ export function createApp() {
         user = { ...user, name };
       }
     } else {
-      const r = await db.insert(`INSERT INTO ${T.users} (name, email) VALUES (?, ?)`, [name, email]);
+      // demo on serverless: a unique id, so a cookie minted on one instance never names another person on the next
+      const r = await insertRow(T.users, ['name', 'email'], [name, email]);
       user = { id: r.id, name, email };
     }
     await setUserCookie(res, user.id);
@@ -114,6 +239,68 @@ export function createApp() {
     res.json({ ok: true });
   });
 
+  // ----- pitch demo -----
+
+  /**
+   * Demo: `speed` is the replay latency multiplier (OCEANMIND_DEMO_SPEED): each
+   * scripted model reply waits latency[task] × speed ms (± jitter), so a request
+   * waits about routeLatency[route] × speed. 0 = instant. Tables are ms at speed 1.
+   */
+  app.get('/api/demo/status', (_req, res) => {
+    if (!isDemoMode()) return res.json({ demo: false });
+    res.json(demoStatus());
+  });
+
+  /**
+   * Demo only: start a rehearsal from the seeded state. Wipes every row the
+   * caller created on this instance; for the persona (or a signed-out caller,
+   * which means the persona) the deterministic history is written back, so the
+   * Logbook, Projects and Notifications read exactly as after a cold start.
+   * Other users just get a clean slate. Only this instance is reset.
+   */
+  app.post('/api/demo/reset', asyncRoute(async (req, res) => {
+    if (!isDemoMode()) return res.status(404).json({ error: 'Not found.' });
+    const user = await getUser(req);
+    const result = await demoReset(user?.id ?? DEMO_USER_ID);
+    res.json({ ok: true, ...result });
+  }));
+
+  /** Demo only: put a session row back on an instance that never saw it (same id, whitelisted columns). */
+  app.post('/api/demo/restore', requireUser, asyncRoute(async (req, res) => {
+    if (!isDemoMode()) return res.status(404).json({ error: 'Not found.' });
+    const row = req.body?.row;
+    const id = rowId(row?.id);
+    if (!isObj(row) || !id) return res.status(400).json({ error: 'Nothing to restore.' });
+    // only ever the caller's own rows: the row must name the caller, and the id must be free or already theirs
+    if (rowId(row.user_id) !== req.user.id) return res.status(403).json({ error: 'That session belongs to someone else.' });
+    if (!getTopic(String(row.topic_id))) return res.status(400).json({ error: 'Unknown topic.' });
+    if (!SESSION_STATUSES.includes(row.status)) return res.status(400).json({ error: 'Unknown session status.' });
+    const parsed = Object.fromEntries(SESSION_JSON_COLS.map((c) => [c, parseColumn(row[c])]));
+    const problem = restoreProblem(row, parsed);
+    if (problem) return res.status(400).json({ error: problem });
+    const existing = await db.get(`SELECT user_id FROM ${T.learning_sessions} WHERE id = ?`, [id]);
+    // seeded ids belong to the persona, even on an instance whose seed is missing (a re-seed must never collide)
+    const seeded = id <= DEMO_SEED_MAX_IDS[T.learning_sessions] && req.user.id !== DEMO_USER_ID;
+    if ((existing && existing.user_id !== req.user.id) || seeded) return res.status(409).json({ error: 'That session id is taken.' });
+    // a null in a NOT NULL column falls back to its default (insert) or keeps the stored value (replace)
+    const cols = SESSION_RESTORE_COLS.filter((c) => row[c] !== undefined && !(row[c] === null && SESSION_NOT_NULL.includes(c)));
+    const values = cols.map((c) => {
+      const v = row[c];
+      if (c === 'user_id') return req.user.id;
+      if (SESSION_JSON_COLS.includes(c)) return v === null || typeof v === 'string' ? v : JSON.stringify(v);
+      return v === null || typeof v === 'number' || typeof v === 'string' ? v : String(v);
+    });
+    if (existing) {
+      await db.run(`UPDATE ${T.learning_sessions} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, [...values, id]);
+    } else {
+      await db.run(
+        `INSERT INTO ${T.learning_sessions} (id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`,
+        [id, ...values]
+      );
+    }
+    res.json({ ok: true, restored: id, replaced: Boolean(existing) });
+  }));
+
   // ----- AI status + admin config -----
 
   app.get('/api/ai/status', asyncRoute(async (_req, res) => {
@@ -122,7 +309,9 @@ export function createApp() {
   }));
 
   app.get('/api/admin/config', asyncRoute(async (_req, res) => {
-    res.json({ config: await maskedConfig(), providers: PROVIDERS });
+    // demo: list the active replay provider too, so the admin page can render it
+    const providers = isDemoMode() ? { ...PROVIDERS, replay: REPLAY_PROVIDER } : PROVIDERS;
+    res.json({ config: await maskedConfig(), providers });
   }));
 
   app.post('/api/admin/test', asyncRoute(async (req, res) => {
@@ -163,15 +352,18 @@ export function createApp() {
 
   // ----- learning sessions -----
 
+  app.use('/api/sessions', demoSessionRows);
+
   app.post('/api/sessions', requireUser, requireAi, asyncRoute(async (req, res) => {
     const topic = getTopic(String(req.body?.topicId ?? ''));
     if (!topic) return res.status(400).json({ error: 'Unknown topic.' });
+    // the learner's own words from the home screen, kept for the lesson and the dive log
+    const goal = typeof req.body?.goal === 'string' ? req.body.goal.trim().slice(0, 300) : '';
     const knowledgeMap = await compileKnowledgeMap(topic);
     const questions = await generateQuestions(topic, knowledgeMap);
-    const r = await db.insert(
-      `INSERT INTO ${T.learning_sessions} (user_id, topic_id, status, knowledge_map, questions, answered)
-       VALUES (?, ?, 'assessment', ?, ?, '[]')`,
-      [req.user.id, topic.id, JSON.stringify(knowledgeMap), JSON.stringify(questions)]
+    const r = await insertRow(T.learning_sessions,
+      ['user_id', 'topic_id', 'status', 'knowledge_map', 'questions', 'answered', 'goal'],
+      [req.user.id, topic.id, 'assessment', JSON.stringify(knowledgeMap), JSON.stringify(questions), '[]', goal || null]
     );
     res.status(201).json({ session: await sessionForLearner(await sessionRow(r.id)) });
   }));
@@ -250,7 +442,7 @@ export function createApp() {
     const answered = parse(s.answered, []);
     if (answered.length !== questions.length) return res.status(409).json({ error: 'Finish the depth check first — some questions are unanswered.' });
     const topic = getTopic(s.topic_id);
-    const lesson = await generateLesson(topic, { zone: s.zone, scorePct: s.score, answered, knowledgeMap: parse(s.knowledge_map, null) });
+    const lesson = await generateLesson(topic, { zone: s.zone, scorePct: s.score, answered, knowledgeMap: parse(s.knowledge_map, null), userGoal: s.goal || undefined });
     await db.run(`UPDATE ${T.learning_sessions} SET lesson = ?, status = 'lesson', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [JSON.stringify(lesson), s.id]);
     res.json({ session: await sessionForLearner(await sessionRow(s.id)) });
   }));
@@ -272,13 +464,14 @@ export function createApp() {
     const decision = await tutorDecide(topic, lesson, stepIndex, messages);
 
     if (decision.action === 'expand') {
-      const newSteps = await generateExpansionSteps(topic, s.zone, decision.about, lesson, stepIndex);
+      const newSteps = await generateExpansionSteps(topic, s.zone, decision.about, lesson, stepIndex, { goal: s.goal || null });
       lesson.steps.splice(stepIndex + 1, 0, ...newSteps);
       await db.run(`UPDATE ${T.learning_sessions} SET lesson = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [JSON.stringify(lesson), s.id]);
       return res.json({ text: decision.reply, updated: 'expanded', addedCount: newSteps.length, session: await sessionForLearner(await sessionRow(s.id)) });
     }
     if (decision.action === 'redesign') {
-      const rebuilt = await generateLesson(topic, { zone: s.zone, scorePct: s.score, answered: parse(s.answered, []), knowledgeMap: parse(s.knowledge_map, null), userGoal: decision.goal });
+      // the redesign keeps its own (freshly stated) goal rather than the stored one
+      const rebuilt = await generateLesson(topic, { zone: s.zone, scorePct: s.score, answered: parse(s.answered, []), knowledgeMap: parse(s.knowledge_map, null), userGoal: decision.goal, redesign: true });
       await db.run(`UPDATE ${T.learning_sessions} SET lesson = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [JSON.stringify(rebuilt), s.id]);
       return res.json({ text: decision.reply, updated: 'redesigned', session: await sessionForLearner(await sessionRow(s.id)) });
     }
@@ -291,7 +484,7 @@ export function createApp() {
     if (s.status !== 'lesson' && s.status !== 'closed') return res.status(409).json({ error: 'The dive log is written once the lesson is finished.' });
     const existing = parse(s.summary, null);
     if (existing) return res.json({ summary: existing });
-    const summary = await generateSummary(getTopic(s.topic_id), { zone: s.zone, scorePct: s.score, answered: parse(s.answered, []), lesson: parse(s.lesson, null) });
+    const summary = await generateSummary(getTopic(s.topic_id), { zone: s.zone, scorePct: s.score, answered: parse(s.answered, []), lesson: parse(s.lesson, null), goal: s.goal || null });
     await db.run(`UPDATE ${T.learning_sessions} SET summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [JSON.stringify(summary), s.id]);
     res.json({ summary });
   }));
@@ -310,13 +503,13 @@ export function createApp() {
       note = String(req.body?.note ?? '').trim().slice(0, 2000);
       if (reasons.length === 0 && !note) return res.status(400).json({ error: 'Please pick a reason or tell us what went wrong, so we can fix it.' });
     }
-    const fb = await db.insert(`INSERT INTO ${T.feedback} (session_id, rating, reasons, note) VALUES (?, ?, ?, ?)`, [s.id, rating, JSON.stringify(reasons), note]);
+    const fb = await insertRow(T.feedback, ['session_id', 'rating', 'reasons', 'note'], [s.id, rating, JSON.stringify(reasons), note]);
     if (happy) {
       await db.run(`UPDATE ${T.learning_sessions} SET status = 'closed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [s.id]);
       return res.json({ happy: true });
     }
     await db.run(`UPDATE ${T.learning_sessions} SET status = 'awaiting_rebuild', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [s.id]);
-    await db.run(`INSERT INTO ${T.reports} (session_id, feedback_id) VALUES (?, ?)`, [s.id, fb.id]);
+    await insertRow(T.reports, ['session_id', 'feedback_id'], [s.id, fb.id]);
     res.json({ happy: false });
   }));
 
@@ -438,18 +631,16 @@ export function createApp() {
     const lesson = await generateLesson(topic, {
       zone, scorePct: s.score, answered: parse(s.answered, []), knowledgeMap: parse(s.knowledge_map, null),
       supportNote: note, previousFeedback: `rated ${fb.rating}/5, reasons: ${parse(fb.reasons, []).join(', ') || '—'}${fb.note ? `, note: "${fb.note}"` : ''}`,
+      userGoal: s.goal || undefined,
     });
-    const created = await db.insert(
-      `INSERT INTO ${T.learning_sessions}
-         (user_id, topic_id, version, status, score, depth, zone, knowledge_map, answered, lesson, rebuilt_from, support_note)
-       VALUES (?, ?, ?, 'lesson', ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [s.user_id, s.topic_id, s.version + 1, s.score, depth, zone, s.knowledge_map, s.answered, JSON.stringify(lesson), s.id, note]
+    const created = await insertRow(T.learning_sessions,
+      ['user_id', 'topic_id', 'version', 'status', 'score', 'depth', 'zone', 'knowledge_map', 'answered', 'lesson', 'rebuilt_from', 'support_note', 'goal'],
+      [s.user_id, s.topic_id, s.version + 1, 'lesson', s.score, depth, zone, s.knowledge_map, s.answered, JSON.stringify(lesson), s.id, note, s.goal ?? null]
     );
     await db.run(`UPDATE ${T.learning_sessions} SET status = 'closed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [s.id]);
     await db.run(`UPDATE ${T.reports} SET status = 'resolved', support_note = ?, corrected_zone = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`, [note, zone, r.id]);
     const emailHtml = rebuildEmailHtml({ userName: s.user_name, topicTitle: topic.title, zone, depth, supportNote: note });
-    await db.run(
-      `INSERT INTO ${T.notifications} (user_id, session_id, title, body, email_html) VALUES (?, ?, ?, ?, ?)`,
+    await insertRow(T.notifications, ['user_id', 'session_id', 'title', 'body', 'email_html'],
       [s.user_id, created.id, `Your rebuilt ${topic.title} lesson is ready`,
         `Our support team recalibrated your dive to the ${ZONES[zone].label} (${depth.toLocaleString()} m) and the agent rebuilt your lesson from scratch. It’s waiting for you.`, emailHtml]
     );
@@ -467,14 +658,24 @@ export function createApp() {
     if (serialized.length > 200000) return res.status(400).json({ error: 'That build is too large to save.' });
     const topicId = typeof req.body?.topicId === 'string' ? req.body.topicId : null;
     const sessionId = Number.isInteger(req.body?.sessionId) ? req.body.sessionId : null;
-    const projectId = Number.isInteger(req.body?.projectId) ? req.body.projectId : null;
+    const projectId = rowId(req.body?.projectId);
+    const cols = ['user_id', 'session_id', 'topic_id', 'kind', 'name', 'data'];
+    const values = [req.user.id, sessionId, topicId, kind, name, serialized];
     if (projectId) {
       const owned = await db.get(`SELECT id FROM ${T.projects} WHERE id = ? AND user_id = ?`, [projectId, req.user.id]);
+      if (!owned && isDemoMode()) {
+        // demo: this instance never saw the project — save it again, keeping its id when free
+        const taken = projectId <= DEMO_SEED_MAX_IDS[T.projects] || (await db.get(`SELECT id FROM ${T.projects} WHERE id = ?`, [projectId]));
+        const r = taken
+          ? await insertRow(T.projects, cols, values)
+          : await db.insert(`INSERT INTO ${T.projects} (id, ${cols.join(', ')}) VALUES (?, ?, ?, ?, ?, ?, ?)`, [projectId, ...values]);
+        return res.json({ ok: true, projectId: r.id });
+      }
       if (!owned) return res.status(404).json({ error: 'Project not found.' });
       await db.run(`UPDATE ${T.projects} SET name = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [name, serialized, projectId]);
       return res.json({ ok: true, projectId });
     }
-    const r = await db.insert(`INSERT INTO ${T.projects} (user_id, session_id, topic_id, kind, name, data) VALUES (?, ?, ?, ?, ?, ?)`, [req.user.id, sessionId, topicId, kind, name, serialized]);
+    const r = await insertRow(T.projects, cols, values);
     res.status(201).json({ ok: true, projectId: r.id });
   }));
 
@@ -517,6 +718,9 @@ export function createApp() {
 
   // ----- static client + errors -----
 
+  // an unknown API route answers JSON (the client always parses JSON), never the SPA or an HTML page
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
+
   const dist = join(__dirname, '..', 'client', 'dist');
   if (existsSync(dist)) {
     app.use(express.static(dist));
@@ -539,6 +743,7 @@ export async function startServer() {
   const app = createApp();
   app.listen(PORT, async () => {
     console.log(`OceanMind server listening on http://localhost:${PORT} (db: ${db.driver})`);
+    if (isDemoMode()) console.log(`Pitch demo mode: scripted replay provider, seeded in-memory DB, persona ${DEMO_PERSONA.email} (speed ×${demoSpeed()})`);
     const cfg = await maskedConfig().catch(() => null);
     console.log(cfg ? `AI model: connected (${cfg.provider} · ${cfg.model})` : 'AI model: NOT CONFIGURED — open /#/admin to connect a key');
   });

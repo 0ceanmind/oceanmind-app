@@ -1,0 +1,168 @@
+/* =====================================================================
+   Agent blocks: flow builder, live agent, chatbot builder (team om-ag-).
+   Motion and feedback only; the look stays in styles.css. Reuses the
+   motion.css keyframes (omPop, omSwap, omFlash, omShake, omDot) and the
+   styles.css ones (stepIn, nodeGlow, pulseFlow, spin, jBob).
+   ===================================================================== */
+
+/* ---------------------------------------------------------- flow builder */
+
+/* Button and auto-fit view moves glide; drags and wheel zoom stay 1:1. */
+.fb-world.om-ag-glide { transition: transform 0.6s var(--ease); }
+
+/* Wires can leave the SVG's 0,0 origin when nodes are dragged up or left. */
+.fb-edges { overflow: visible; }
+/* A fat invisible stroke under each wire makes it easy to click. */
+.fb-edges path.om-ag-edge-hit { fill: none; stroke: transparent; stroke-width: 14; }
+.fb-edges .om-ag-edge:hover .om-ag-wire { stroke: rgba(255, 107, 129, 0.85); }
+.om-ag-wire { transition: stroke 0.35s var(--ease), opacity 0.35s var(--ease); }
+/* A wire that carried data in the last run settles in kelp. */
+.om-ag-wire.om-ag-carried { stroke: rgba(53, 208, 165, 0.75); opacity: 0.8; }
+
+/* The rubber-band wire that follows the pointer while a port is armed. */
+.fb-edges path.om-ag-rubber {
+  pointer-events: none; fill: none;
+  stroke: var(--accent-soft); stroke-width: 2; stroke-dasharray: 5 6; opacity: 0.9;
+  animation: omAgMarch 0.5s linear infinite;
+}
+@keyframes omAgMarch { to { stroke-dashoffset: -22; } }
+
+/* A removed wire flashes and fades instead of vanishing. */
+.fb-edges path.om-ag-ghost-edge {
+  pointer-events: none; fill: none; stroke: var(--danger); stroke-width: 2.2;
+  animation: omAgFade 0.28s var(--ease) forwards;
+}
+@keyframes omAgFade { from { opacity: 0.9; } to { opacity: 0; } }
+
+/* The data packet riding a hot wire. */
+.om-ag-packet { pointer-events: none; animation: omAgFadeIn 0.12s var(--ease) both; }
+.om-ag-packet .halo { fill: rgba(127, 216, 232, 0.28); }
+.om-ag-packet .core { fill: #eafcff; filter: drop-shadow(0 0 4px rgba(127, 216, 232, 0.95)); }
+@keyframes omAgFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* A node that just finished rings once in kelp; a failed one shakes. */
+.fb-node.did-run { animation: omAgDone 0.7s var(--ease); }
+@keyframes omAgDone {
+  from { box-shadow: 0 0 0 0 rgba(53, 208, 165, 0.55), 0 10px 26px -12px rgba(0, 0, 0, 0.8); }
+  to { box-shadow: 0 0 0 12px rgba(53, 208, 165, 0), 0 10px 26px -12px rgba(0, 0, 0, 0.8); }
+}
+.fb-node.error { animation: omShake 0.45s var(--ease); }
+/* While a wire is armed, every node it could connect to shows a soft target ring. */
+.fb-node.om-ag-target { border-color: rgba(127, 216, 232, 0.55); box-shadow: 0 0 0 3px rgba(22, 184, 216, 0.1), 0 10px 26px -12px rgba(0, 0, 0, 0.8); }
+/* A deleted node shrinks away. */
+.fb-node.om-ag-ghost { pointer-events: none; overflow: hidden; animation: omAgNodeOut 0.28s var(--ease) forwards; }
+@keyframes omAgNodeOut { to { opacity: 0; transform: scale(0.85); } }
+
+/* The node's own output line (short; the inspector keeps the full text). */
+.om-ag-node-out {
+  margin: 0 0.5rem 0.5rem; padding: 0.32rem 0.5rem;
+  border: 1px solid rgba(53, 208, 165, 0.28); border-radius: 0.55rem;
+  background: rgba(53, 208, 165, 0.08); color: var(--ink-dim);
+  font-size: 0.68rem; line-height: 1.35; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  animation: omSwap 0.35s var(--ease) both;
+}
+.fb-node-head + .om-ag-node-out { margin-top: 0.45rem; }
+.om-ag-node-out.working { display: block; background: rgba(127, 216, 232, 0.06); border-color: var(--hairline); }
+.om-ag-node-out.working .om-typing i { width: 0.34rem; height: 0.34rem; }
+.om-ag-node-out.bad { background: rgba(255, 107, 129, 0.08); border-color: rgba(255, 107, 129, 0.35); color: #ffb3c0; }
+
+.fb-arming { animation: stepIn 0.3s var(--ease) both; }
+.fb-zoom span { min-width: 2.7em; text-align: center; font-variant-numeric: tabular-nums; }
+.fb-result { white-space: pre-line; }
+.om-ag-run-status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--accent-soft); margin-bottom: 0.6rem; }
+
+/* ------------------------------------------------------------ live agent */
+
+.om-ag-loop-head { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.55rem; }
+.om-ag-phase { transition: color 0.35s var(--ease), text-shadow 0.35s var(--ease); }
+.om-ag-phase.on { color: #fff; text-shadow: 0 0 12px rgba(127, 216, 232, 0.85); }
+
+.om-ag-counter { display: inline-flex; align-items: center; gap: 0.5rem; flex-shrink: 0; font-size: 0.8rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.om-ag-counter b { color: var(--ink); font-size: 0.92rem; }
+.om-ag-ring { display: block; }
+.om-ag-ring path { fill: none; stroke: var(--hairline-strong); stroke-width: 3.5; stroke-linecap: round; transition: stroke 0.35s var(--ease), filter 0.35s var(--ease); }
+.om-ag-ring path.on.think { stroke: var(--accent-soft); filter: drop-shadow(0 0 3px rgba(127, 216, 232, 0.9)); }
+.om-ag-ring path.on.act { stroke: #ffb36b; filter: drop-shadow(0 0 3px rgba(255, 179, 107, 0.9)); }
+.om-ag-ring path.on.observe { stroke: var(--kelp); filter: drop-shadow(0 0 3px rgba(53, 208, 165, 0.9)); }
+.om-ag-ring path.pulse { animation: omAgArcPulse 1s var(--ease) infinite; }
+.om-ag-ring path.done { stroke: var(--kelp); }
+@keyframes omAgArcPulse { 50% { opacity: 0.35; } }
+
+.om-ag-progress { height: 3px; border-radius: 999px; background: rgba(127, 216, 232, 0.1); overflow: hidden; margin-bottom: 0.9rem; }
+.om-ag-progress span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-deep), var(--accent-soft)); transform-origin: left; transition: transform 0.6s var(--ease); }
+
+/* the "deciding" card */
+.agent-step.om-ag-thinking .glyph { animation: jBob 1.6s var(--ease) infinite; }
+.om-ag-thinking p { display: flex; align-items: center; gap: 0.6rem; }
+.om-ag-thinking p .muted { font-size: 0.88rem; }
+.agent-step .om-ag-step-body { min-width: 0; flex: 1; }
+
+/* act: the tool as a coloured chip + its exact input */
+.om-ag-chip {
+  display: inline-flex; align-items: center; gap: 0.35rem; vertical-align: middle;
+  padding: 0.16rem 0.6rem; border-radius: 999px; border: 1px solid;
+  font-size: 0.78rem; font-weight: 700; margin-right: 0.45rem;
+  animation: omPop 0.45s var(--ease-spring) both;
+}
+.om-ag-chip.t-calculator { color: #ffd2a8; border-color: rgba(255, 179, 107, 0.45); background: rgba(255, 179, 107, 0.12); }
+.om-ag-chip.t-docsearch { color: var(--accent-soft); border-color: rgba(127, 216, 232, 0.45); background: rgba(22, 184, 216, 0.12); }
+.om-ag-chip.t-notes { color: #b8f3e1; border-color: rgba(53, 208, 165, 0.45); background: rgba(53, 208, 165, 0.12); }
+.om-ag-chip.t-clock { color: #ffc4b4; border-color: rgba(255, 138, 107, 0.45); background: rgba(255, 138, 107, 0.12); }
+.om-ag-input {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-size: 0.84rem; color: var(--ink);
+  background: rgba(127, 216, 232, 0.08); border: 1px solid var(--hairline); border-radius: 0.4rem;
+  padding: 0.08rem 0.45rem; word-break: break-word;
+}
+
+/* observe: real results, tidied */
+.agent-step p.om-ag-obs { white-space: pre-wrap; word-break: break-word; }
+.om-ag-result { color: var(--kelp) !important; font-weight: 700; }
+.om-ag-obs-label { font-size: 0.78rem !important; color: var(--ink-faint) !important; }
+.om-ag-quote {
+  margin: 0.35rem 0 0; padding: 0.35rem 0.7rem;
+  border-left: 2px solid rgba(127, 216, 232, 0.45); border-radius: 0 0.5rem 0.5rem 0;
+  background: rgba(127, 216, 232, 0.05); color: var(--ink-dim);
+  font-size: 0.84rem; line-height: 1.5; font-style: italic;
+}
+.om-ag-quote.note { border-left-color: rgba(53, 208, 165, 0.55); background: rgba(53, 208, 165, 0.06); font-style: normal; }
+
+/* the finish */
+.agent-final.om-ag-final { position: relative; overflow: hidden; animation: omPop 0.55s var(--ease-spring) both; }
+.agent-final.om-ag-final::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(53, 208, 165, 0.22) 47%, rgba(255, 255, 255, 0.12) 52%, transparent 68%);
+  transform: translateX(-110%); animation: omAgSheen 1.3s 0.25s var(--ease) forwards;
+}
+@keyframes omAgSheen { to { transform: translateX(110%); } }
+.om-ag-flag { display: inline-block; animation: omAgFlag 0.8s 0.1s var(--ease-spring) both; }
+@keyframes omAgFlag { from { opacity: 0; transform: translateY(6px) rotate(-18deg) scale(0.6); } to { opacity: 1; transform: none; } }
+.om-ag-final-stats { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.7rem; }
+.om-ag-final-stats > * { animation: stepIn 0.45s var(--ease) both; animation-delay: calc(0.5s + var(--i, 0) * 80ms); }
+.om-ag-final-stats .om-ag-chip { margin-right: 0; }
+.om-ag-stat { display: inline-flex; align-items: center; padding: 0.16rem 0.6rem; border-radius: 999px; border: 1px solid rgba(53, 208, 165, 0.35); background: rgba(53, 208, 165, 0.08); color: #b8f3e1; font-size: 0.76rem; font-weight: 600; }
+
+/* ------------------------------------------------------- chatbot builder */
+
+.intent-card { position: relative; transition: border-color 0.4s var(--ease), background 0.4s var(--ease), box-shadow 0.4s var(--ease); }
+.intent-card.om-ag-intent { animation: stepIn 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms); }
+.intent-card.om-ag-intent.om-ag-new { animation: omPop 0.5s var(--ease-spring) both, omFlash 1.4s var(--ease) 0.5s 2; }
+/* the intent that answered the last message */
+.intent-card.om-ag-lit { border-color: var(--accent); background: rgba(22, 184, 216, 0.1); box-shadow: 0 0 0 3px rgba(22, 184, 216, 0.16); }
+.om-ag-lit-pulse { position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; animation: omAgRing 0.9s var(--ease) both; }
+@keyframes omAgRing { from { box-shadow: 0 0 0 0 rgba(127, 216, 232, 0.6); } to { box-shadow: 0 0 0 14px rgba(127, 216, 232, 0); } }
+/* the trigger words that matched (box-shadow, not padding, so nothing reflows) */
+.intent-card .om-ag-hit { color: var(--ink); background: rgba(22, 184, 216, 0.24); border-radius: 0.25rem; box-shadow: 0 0 0 2px rgba(22, 184, 216, 0.24); }
+.intent-card:not(.om-ag-lit) .om-ag-hit { color: var(--ink-dim); background: rgba(127, 216, 232, 0.1); box-shadow: 0 0 0 2px rgba(127, 216, 232, 0.1); }
+/* a deleted intent folds away */
+.intent-card.om-ag-leave { pointer-events: none; overflow: hidden; animation: omAgCollapse 0.32s var(--ease) forwards; }
+@keyframes omAgCollapse {
+  from { opacity: 1; max-height: 14rem; }
+  to { opacity: 0; transform: translateX(-12px); max-height: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0; border-width: 0; }
+}
+.om-ag-miss {
+  margin: 0 0 0.6rem; padding: 0.55rem 0.8rem; border-radius: var(--r-md);
+  border: 1px dashed rgba(255, 138, 107, 0.45); background: rgba(255, 138, 107, 0.07);
+  color: #ffc4b4; font-size: 0.8rem; line-height: 1.45;
+}
+.bubble.om-ag-typing-bubble { padding: 0.55rem 0.9rem; }

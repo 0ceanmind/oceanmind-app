@@ -12,7 +12,11 @@
     "dev": "concurrently -k -n server,client \"node server/index.js\" \"npm --prefix client run dev\"",
     "build": "npm --prefix client run build",
     "start": "node server/index.js",
-    "test": "node --test server/test/scoring.test.js server/test/topicMatch.test.js server/test/mlp.test.js server/test/generate.test.js server/test/blocks.test.js"
+    "demo": "node server/demo.js",
+    "demo:dev": "concurrently -k -n demo,client \"node server/demo.js --dev\" \"npm --prefix client run dev\"",
+    "stage:demo": "node scripts/stage-demo-deploy.mjs",
+    "test:corpus": "node server/demo/replay/check-corpus.mjs",
+    "test": "node --test server/test/scoring.test.js server/test/topicMatch.test.js server/test/mlp.test.js server/test/generate.test.js server/test/blocks.test.js server/test/replay.test.js server/test/demo-routes.test.js"
   },
   "dependencies": {
     "express": "^4.21.0",

@@ -39,11 +39,15 @@ export default function Sessions({ navigate }) {
             const st = STATUS_LABEL[s.status] ?? { text: s.status, cls: 'resolved' };
             return (
               <Reveal key={s.id} delay={i * 70}>
-                <button className="report-row" onClick={() => navigate(`/session/${s.id}`)}>
+                <button className="report-row" onClick={() => navigate(`/session/${s.id}`)}
+                  data-demo="logbook-row" data-session-id={s.id} data-status={s.status} data-zone={s.zone ?? undefined}>
                   <span>
                     <span className="who">{s.topicTitle}{s.version > 1 ? ` · rebuilt v${s.version}` : ''}</span>
                     <span className="what">
-                      {s.zone ? `${s.depth.toLocaleString()} m · ` : ''}started {parseTs(s.createdAt).toLocaleDateString()}
+                      {s.zone && (
+                        <span className={`om-v-depth-chip ${s.zone}`} title={`${s.zone} zone`}>🤿 {s.depth.toLocaleString()} m</span>
+                      )}
+                      started {parseTs(s.createdAt).toLocaleDateString()}
                     </span>
                   </span>
                   <span className={`status-pill ${st.cls}`}>{st.text}</span>

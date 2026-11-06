@@ -1,0 +1,152 @@
+/* =====================================================================
+   Generic + agent-source blocks (team D2b). Motion and feedback only —
+   the look comes from styles.css. Every class is prefixed om-gen-.
+   NB: this file is bundled BEFORE styles.css/motion.css (it's imported
+   from inside App's tree), so anything that overrides an existing rule
+   uses a compound selector to win on specificity, not on order.
+   ===================================================================== */
+
+.om-gen-block { display: block; }
+
+/* small ghost button (resume tour, reset) */
+.btn.om-gen-mini { padding: 0.35rem 0.85rem; font-size: 0.78rem; gap: 0.4rem; }
+.om-gen-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem 0.8rem; flex-wrap: wrap; }
+.om-gen-foot .om-gen-mini { margin-top: 0.8rem; }
+
+/* SVG helpers */
+.om-gen-fillbox { transform-box: fill-box; transform-origin: center; }
+.om-gen-halo { paint-order: stroke; stroke: rgba(5, 18, 30, 0.92); stroke-width: 3px; stroke-linejoin: round; }
+.om-gen-fade { transition: opacity 0.45s var(--ease); }
+.om-gen-loop-dot { transition: fill 0.4s var(--ease), stroke 0.4s var(--ease), stroke-width 0.4s var(--ease), r 0.35s var(--ease-spring); }
+
+/* a travelling token / message packet */
+.om-gen-token { filter: drop-shadow(0 0 5px currentColor); pointer-events: none; }
+
+/* a node receiving something: one ring that swells and fades */
+.om-gen-ring { transform-box: fill-box; transform-origin: center; pointer-events: none; animation: omGenRing 0.55s var(--ease) both; }
+@keyframes omGenRing { from { opacity: 0.9; transform: scale(1); } to { opacity: 0; transform: scale(1.4); } }
+
+/* ------------------------------------------------------------- diagram */
+
+/* left→right reveal, column by column, once the diagram is on screen */
+.om-gen-dg .om-gen-dg-in {
+  animation: omGenNodeIn 0.5s var(--ease) both;
+  animation-delay: calc(var(--d, 0) * 160ms + 60ms);
+  animation-play-state: paused;
+}
+.om-gen-dg .om-gen-dg-in.om-gen-dg-edge { animation-name: omGenEdgeIn; }
+.om-gen-dg.om-gen-live .om-gen-dg-in { animation-play-state: running; }
+@keyframes omGenNodeIn { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+@keyframes omGenEdgeIn { from { opacity: 0; } to { opacity: 1; } }
+.om-gen-dg-box { transition: fill 0.35s var(--ease), stroke 0.35s var(--ease), stroke-width 0.35s var(--ease); }
+.om-gen-dg-loop-label { pointer-events: none; }
+
+/* --------------------------------------------------------------- chart */
+
+.om-gen-bar { transform-box: fill-box; transform-origin: 50% 100%; animation: omGenGrowY 0.6s var(--ease) both; transition: opacity 0.25s var(--ease); }
+.om-gen-bar.neg { transform-origin: 50% 0%; }
+@keyframes omGenGrowY { from { transform: scaleY(0); } to { transform: none; } }
+.om-gen-chart-dot { transform-box: fill-box; transform-origin: center; animation: omGenDot 0.35s var(--ease-spring) both; }
+@keyframes omGenDot { from { opacity: 0; transform: scale(0.2); } to { opacity: 1; transform: none; } }
+.om-gen-tip { animation: omGenEdgeIn 0.18s var(--ease) both; }
+
+/* -------------------------------------------------------------- memory */
+
+.om-gen-meter { margin-top: 0.8rem; display: flex; align-items: center; gap: 0.7rem; }
+.om-gen-meter-label { flex: 0 0 auto; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; color: var(--ink-faint); }
+.om-gen-meter-track {
+  flex: 1; display: flex; height: 1.35rem; padding: 2px; gap: 0;
+  border: 1px solid var(--hairline-strong); border-radius: 999px; background: rgba(5, 18, 30, 0.6); overflow: hidden;
+}
+.om-gen-cell {
+  flex: 0 0 auto; height: 100%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; line-height: 1; white-space: nowrap;
+  border-radius: 999px; box-shadow: inset 0 0 0 1px transparent;
+  transition: width 0.45s var(--ease), background 0.45s var(--ease), box-shadow 0.45s var(--ease), opacity 0.45s var(--ease);
+}
+.om-gen-cell.full { background: rgba(22, 184, 216, 0.32); box-shadow: inset 0 0 0 1px rgba(5, 18, 30, 0.9); }
+.om-gen-cell.dropped { background: transparent; box-shadow: inset 0 0 0 1px rgba(127, 216, 232, 0.12); }
+.om-gen-cell.summarised { background: rgba(53, 208, 165, 0.3); }
+.om-gen-cell.sum { background: rgba(53, 208, 165, 0.38); box-shadow: inset 0 0 0 1px rgba(5, 18, 30, 0.9); }
+.om-gen-cell i { font-style: normal; transition: opacity 0.45s var(--ease), filter 0.45s var(--ease); }
+.om-gen-cell i.lost { opacity: 0.28; filter: grayscale(1); }
+
+/* summarising: the old turns fold down under the summary line, one after another */
+.mem-line.om-gen-folded { font-size: 0.74rem; padding: 0.12rem 0.7rem; margin-left: 1.6rem; opacity: 0.6; }
+.mem-line.om-gen-mem-summary { animation: omGenSummaryIn 0.6s var(--ease-spring) both; }
+@keyframes omGenSummaryIn {
+  0% { opacity: 0; transform: translateY(-6px) scaleY(0.7); box-shadow: 0 0 0 0 rgba(53, 208, 165, 0); }
+  60% { opacity: 1; transform: none; box-shadow: 0 0 0 6px rgba(53, 208, 165, 0.18); }
+  100% { opacity: 1; transform: none; box-shadow: 0 0 0 0 rgba(53, 208, 165, 0); }
+}
+
+/* ---------------------------------------------------------- guardrails */
+
+.om-gen-stats { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; margin-bottom: 0.7rem; font-size: 0.82rem; color: var(--ink-dim); }
+.om-gen-stats b { color: #fff; font-family: var(--font-display); font-size: 1.05rem; font-variant-numeric: tabular-nums; margin-left: 0.25rem; transition: color 0.4s var(--ease); }
+.om-gen-stats b.hot { color: var(--danger); }
+/* the rail that stopped the run: a shake, a green pulse, and it stays lit */
+.fb-palette .tool-pick.om-gen-rail-fired {
+  border-color: var(--kelp); color: var(--ink); background: rgba(53, 208, 165, 0.12);
+  animation: omShake 0.45s var(--ease), omGenRailGlow 1.3s var(--ease) 0.3s 2;
+}
+.fb-palette .tool-pick.om-gen-rail-fired .box { background: var(--kelp); }
+@keyframes omGenRailGlow { 0%, 100% { box-shadow: 0 0 0 0 rgba(53, 208, 165, 0); } 50% { box-shadow: 0 0 0 6px rgba(53, 208, 165, 0.25); } }
+.agent-step.om-gen-blocked { border-color: rgba(53, 208, 165, 0.45); animation: stepIn 0.5s var(--ease) both, omShake 0.45s var(--ease) 0.4s; }
+
+/* --------------------------------------------------------- multi-agent */
+
+.om-gen-ma-set { transition: opacity 0.55s var(--ease); }
+.om-gen-ma-hub { transition: opacity 0.45s var(--ease), transform 0.6s var(--ease-spring); }
+.om-gen-ma-hub.off { opacity: 0; transform: scale(0.4); }
+
+/* --------------------------------------------------- workflow vs agent */
+
+.om-gen-path { margin-bottom: 0.5rem; }
+.mem-line.om-gen-trail-row { opacity: 0.7; margin-bottom: 0.3rem; animation: omGenTrailIn 0.4s var(--ease) both; }
+@keyframes omGenTrailIn { from { opacity: 0; transform: translateX(-12px); } to { opacity: 0.7; transform: none; } }
+.om-gen-q { animation: omGenQIn 0.34s var(--ease) both; }
+.om-gen-q.leaving { animation: omGenQOut 0.2s var(--ease) both; }
+@keyframes omGenQIn { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: none; } }
+@keyframes omGenQOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-22px); } }
+.dg-detail.om-gen-verdict { animation: omPop 0.5s var(--ease-spring) both, omGenVerdictGlow 1.2s var(--ease) 0.25s 1; }
+@keyframes omGenVerdictGlow { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 45% { box-shadow: 0 0 0 7px var(--om-gen-glow, rgba(22, 184, 216, 0.25)); } }
+
+/* ---------------------------------------------------- pattern explorer */
+
+.om-gen-xfade { position: relative; }
+.om-gen-xfade-out { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; animation: omGenXOut 0.4s var(--ease) both; }
+@keyframes omGenXOut { from { opacity: 1; } to { opacity: 0; transform: scale(0.985); } }
+
+/* ----------------------------------------------------------- simulator */
+
+.om-gen-sim { cursor: crosshair; touch-action: none; }
+.om-gen-sim-value { font-family: var(--font-display); font-size: 2.4rem; font-weight: 600; color: #fff; line-height: 1; font-variant-numeric: tabular-nums; }
+.om-gen-sim-delta { margin-top: 0.55rem; font-size: 0.82rem; color: var(--ink-faint); }
+.om-gen-sim-delta b { font-family: var(--font-display); }
+.om-gen-sim-delta b.up { color: var(--kelp); }
+.om-gen-sim-delta b.down { color: var(--coral); }
+
+/* ------------------------------------------------------------ sequence */
+
+.om-gen-seq-dot { transition: r 0.4s var(--ease-spring), fill 0.4s var(--ease), stroke 0.4s var(--ease), stroke-width 0.4s var(--ease); }
+.om-gen-seq-label { transition: fill 0.4s var(--ease); }
+
+/* ------------------------------------------------------ reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-demo='1']) .om-gen-dg .om-gen-dg-in,
+  html:not([data-demo='1']) .om-gen-bar,
+  html:not([data-demo='1']) .om-gen-chart-dot,
+  html:not([data-demo='1']) .om-gen-q,
+  html:not([data-demo='1']) .mem-line.om-gen-trail-row,
+  html:not([data-demo='1']) .mem-line.om-gen-mem-summary,
+  html:not([data-demo='1']) .dg-detail.om-gen-verdict,
+  html:not([data-demo='1']) .agent-step.om-gen-blocked,
+  html:not([data-demo='1']) .fb-palette .tool-pick.om-gen-rail-fired,
+  html:not([data-demo='1']) .om-gen-xfade-out { animation: none; }
+  html:not([data-demo='1']) .om-gen-q.leaving,
+  html:not([data-demo='1']) .om-gen-xfade-out { opacity: 0; }
+  html:not([data-demo='1']) .om-gen-ring,
+  html:not([data-demo='1']) .om-gen-token { display: none; }
+}

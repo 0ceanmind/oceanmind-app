@@ -1,23 +1,29 @@
 import { useEffect, useState } from 'react';
 import { api, parseTs } from '../api.js';
-import { Reveal, Spinner, EmptyState, Modal, Card, useToast } from '../components/ui.jsx';
+import { Reveal, Spinner, EmptyState, Modal, ModalClose, Card, useToast } from '../components/ui.jsx';
 
 const KIND_ICON = { flow: '🔧', summary: '🪙' };
+const isDiveLog = (p) => p.kind === 'summary' && Array.isArray(p.data?.learned);
 
 export default function Projects({ navigate }) {
   const toast = useToast();
   const [projects, setProjects] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [opening, setOpening] = useState(null); // id being fetched for the preview
+  const [removing, setRemoving] = useState(null); // id sliding out
 
   const load = () => api('/api/projects').then((d) => setProjects(d.projects)).catch((e) => toast(e.message, 'error'));
   useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = async (p) => {
+    setOpening(p.id);
     try {
       const { project } = await api(`/api/projects/${p.id}`);
       setPreview(project);
     } catch (e) {
       toast(e.message, 'error');
+    } finally {
+      setOpening(null);
     }
   };
 
@@ -39,7 +45,11 @@ export default function Projects({ navigate }) {
   const remove = async (p) => {
     try {
       await api(`/api/projects/${p.id}`, { method: 'DELETE' });
-      setProjects((list) => list.filter((x) => x.id !== p.id));
+      setRemoving(p.id); // slide the row out, then drop it
+      setTimeout(() => {
+        setProjects((list) => list.filter((x) => x.id !== p.id));
+        setRemoving(null);
+      }, 300);
       toast('Project deleted.');
     } catch (e) {
       toast(e.message, 'error');
@@ -64,7 +74,8 @@ export default function Projects({ navigate }) {
         ) : (
           projects.map((p, i) => (
             <Reveal key={p.id} delay={i * 60}>
-              <div className="report-row" style={{ cursor: 'default' }}>
+              <div className={`report-row${removing === p.id ? ' om-v-removing' : ''}`} style={{ cursor: 'default' }}
+                data-demo="project-row" data-project-id={p.id} data-kind={p.kind}>
                 <span>
                   <span className="who">{KIND_ICON[p.kind] ?? '📦'} {p.name}</span>
                   <span className="what">
@@ -72,7 +83,10 @@ export default function Projects({ navigate }) {
                   </span>
                 </span>
                 <span style={{ display: 'flex', gap: '0.4rem' }}>
-                  <button className="btn btn--ghost" onClick={() => open(p)}>Open</button>
+                  <button className="btn btn--ghost" onClick={() => open(p)} disabled={opening === p.id}
+                    data-demo="project-open" data-project-id={p.id}>
+                    {opening === p.id ? <Spinner /> : 'Open'}
+                  </button>
                   <button className="btn btn--ghost" onClick={() => download(p)}>⬇</button>
                   <button className="icon-btn" onClick={() => remove(p)} aria-label="Delete">✕</button>
                 </span>
@@ -87,7 +101,7 @@ export default function Projects({ navigate }) {
           <Card>
             <div className="row-between" style={{ marginBottom: '0.8rem' }}>
               <b>{KIND_ICON[preview.kind] ?? '📦'} {preview.name}</b>
-              <button className="btn btn--ghost" onClick={() => setPreview(null)}>Close ✕</button>
+              <ModalClose />
             </div>
             {preview.kind === 'flow' ? (
               <p className="muted" style={{ fontSize: '0.9rem', lineHeight: 1.6 }}>
@@ -95,9 +109,28 @@ export default function Projects({ navigate }) {
                 {preview.sessionId && ' Reopen the lesson to keep building it.'}
               </p>
             ) : null}
-            <pre style={{ maxHeight: 340, overflow: 'auto', background: 'rgba(5,18,30,0.7)', border: '1px solid var(--hairline)', borderRadius: '0.7rem', padding: '0.9rem', fontSize: '0.74rem', color: 'var(--ink-dim)', marginTop: '0.8rem', whiteSpace: 'pre-wrap' }}>
-              {JSON.stringify(preview.data, null, 2).slice(0, 4000)}
-            </pre>
+            {isDiveLog(preview) ? (
+              // a saved dive log reads as the log it is, not as JSON
+              <div className="om-v-logpreview">
+                {preview.data.headline && <p className="lede" style={{ fontSize: '1rem', color: '#fff' }}>{preview.data.headline}</p>}
+                <div className="log-cols om-v-log">
+                  {[
+                    { cls: 'learned', title: '🌊 What you learned', items: preview.data.learned },
+                    { cls: 'built', title: '🔧 What you built', items: preview.data.built },
+                    { cls: 'next', title: '🧭 Where to dive next', items: preview.data.nextSteps },
+                  ].map((c, ci) => (
+                    <div key={c.cls} className={`log-col ${c.cls}`} style={{ '--c': ci }}>
+                      <h4>{c.title}</h4>
+                      <ul>{(c.items ?? []).map((x, xi) => <li key={xi} style={{ '--i': xi }}>{x}</li>)}</ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <pre style={{ maxHeight: 340, overflow: 'auto', background: 'rgba(5,18,30,0.7)', border: '1px solid var(--hairline)', borderRadius: '0.7rem', padding: '0.9rem', fontSize: '0.74rem', color: 'var(--ink-dim)', marginTop: '0.8rem', whiteSpace: 'pre-wrap' }}>
+                {JSON.stringify(preview.data, null, 2).slice(0, 4000)}
+              </pre>
+            )}
           </Card>
         </Modal>
       )}

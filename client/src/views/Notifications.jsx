@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { Reveal, Spinner, EmptyState, Modal, Card, useToast } from '../components/ui.jsx';
+import { Reveal, Spinner, EmptyState, Modal, ModalClose, Card, useToast } from '../components/ui.jsx';
 
 export default function Notifications({ navigate, refreshUnread }) {
   const toast = useToast();
@@ -37,18 +37,20 @@ export default function Notifications({ navigate, refreshUnread }) {
         ) : (
           items.map((n, i) => (
             <Reveal key={n.id} delay={i * 70}>
-              <div className={`notif-row ${n.read ? '' : 'unread'}`}>
+              <div className={`notif-row ${n.read ? '' : 'unread'}`} data-demo="notif-row" data-notif-id={n.id} data-unread={!n.read}>
+                <span className={`om-v-unread-dot${n.read ? ' read' : ''}`} aria-hidden="true" />
                 <div style={{ flex: 1 }}>
                   <b>{n.title}</b>
                   <p>{n.body}</p>
                   <div className="ctrl-row" style={{ marginTop: '0.7rem' }}>
                     {n.sessionId && (
-                      <button className="btn btn--primary" onClick={() => { markRead(n); navigate(`/session/${n.sessionId}`); }}>
+                      <button className="btn btn--primary" onClick={() => { markRead(n); navigate(`/session/${n.sessionId}`); }}
+                        data-demo="notif-open" data-session-id={n.sessionId}>
                         Open the new lesson <span className="btn-orb">→</span>
                       </button>
                     )}
                     {n.emailHtml && (
-                      <button className="btn btn--ghost" onClick={() => { markRead(n); setEmailOpen(n); }}>
+                      <button className="btn btn--ghost" onClick={() => { markRead(n); setEmailOpen(n); }} data-demo="notif-email">
                         View the email we sent 📧
                       </button>
                     )}
@@ -65,7 +67,7 @@ export default function Notifications({ navigate, refreshUnread }) {
           <Card>
             <div className="row-between" style={{ marginBottom: '0.8rem' }}>
               <b>Email preview — as delivered to your inbox</b>
-              <button className="btn btn--ghost" onClick={() => setEmailOpen(null)}>Close ✕</button>
+              <ModalClose />
             </div>
             <iframe className="email-frame" title="Email preview" srcDoc={emailOpen.emailHtml} sandbox="" />
           </Card>
